@@ -145,6 +145,21 @@ def init_db():
             source TEXT DEFAULT 'textarea',
             created_at TEXT DEFAULT (datetime('now'))
         );
+        CREATE TABLE IF NOT EXISTS dopamine_menu_items (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            category TEXT NOT NULL,
+            energy_required REAL DEFAULT 0.5,
+            sort_order INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS interoception_log (
+            id TEXT PRIMARY KEY,
+            signals TEXT NOT NULL,
+            mood TEXT DEFAULT '',
+            note TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now'))
+        );
     """)
     # Seed default soundscape configs
     default_sounds = [
@@ -157,10 +172,64 @@ def init_db():
             "INSERT OR IGNORE INTO soundscape_config (id, mode, sound_file, volume, loop) VALUES (?, ?, ?, ?, ?)",
             (str(uuid.uuid4()), mode, sound, vol, loop),
         )
+    # Seed default dopamine menu items
+    defaults = [
+        ("Deep breaths (2 min)", "starters", 0.2, 1),
+        ("Stretch break", "starters", 0.3, 2),
+        ("Listen to a song", "starters", 0.3, 3),
+        ("Podcast while cleaning", "sides", 0.5, 1),
+        ("Fidget toy during meeting", "sides", 0.4, 2),
+        ("Body doubling (virtual)", "sides", 0.5, 3),
+        ("Walk outside", "mains", 2.0, 1),
+        ("Nap or rest", "mains", 1.5, 2),
+        ("Creative project", "mains", 2.5, 3),
+        ("Guilty pleasure show", "desserts", 1.0, 1),
+        ("Doomscroll (timered)", "desserts", 0.5, 2),
+        ("Online window shopping", "desserts", 0.5, 3),
+    ]
+    for name, cat, energy, order in defaults:
+        conn.execute(
+            "INSERT OR IGNORE INTO dopamine_menu_items (id, name, category, energy_required, sort_order) VALUES (?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), name, cat, energy, order),
+        )
     conn.commit()
     conn.close()
 
 init_db()
+
+# ── Domain Services ─────────────────────────────────
+def energy_envelope(current_pct: float, tasks_today: int, history: list[float]) -> dict:
+    """Calculate safe energy envelope. Returns {recommended_max, recommended_min, current_usage, status}."""
+    avg_daily_drain = 0.3  # default: each task drains ~30% energy (approximate)
+    if history and len(history) >= 3:
+        avg_daily_drain = sum(history[i] - history[i+1] for i in range(len(history)-1) if history[i] > history[i+1]) / max(len(history)-1, 1)
+    current_usage = tasks_today * avg_daily_drain
+    recommended_max = current_pct * 0.8  # never use more than 80% of available
+    recommended_min = current_pct * 0.15  # always save at least 15%
+    status = "ok"
+    if tasks_today > 0 and current_usage > recommended_max:
+        status = "over"
+    elif current_pct <= 20:
+        status = "low"
+    return {"recommended_max": round(recommended_max, 1), "recommended_min": round(recommended_min, 1), "current_usage": round(current_usage, 1), "status": status}
+
+def detect_boom_bust(history: list[float]) -> dict:
+    """Detect boom-bust patterns in energy history."""
+    if len(history) < 5:
+        return {"pattern": "stable", "confidence": 0.0, "message": "Not enough data yet"}
+    # Check for boom (3+ high days) followed by bust (2+ low days)
+    high_threshold = 60  # above this is "high energy"
+    low_threshold = 30   # below this is "bust"
+    recent = history[-5:]
+    high_days = sum(1 for h in recent[:3] if h >= high_threshold)
+    low_days = sum(1 for h in recent[3:] if h < low_threshold)
+    if high_days >= 2 and low_days >= 2:
+        confidence = min((high_days + low_days) / 5.0, 1.0)
+        return {"pattern": "boom-bust", "confidence": round(confidence, 2), "message": "You've been pushing hard. Tomorrow might feel rough. Want to schedule rest?"}
+    # Check declining pattern
+    if len(recent) >= 3 and all(recent[i] < recent[i-1] for i in range(1, len(recent))):
+        return {"pattern": "declining", "confidence": 0.6, "message": "Your energy has been decreasing. A rest day might help."}
+    return {"pattern": "stable", "confidence": 0.5, "message": "Energy pattern looks consistent."}
 
 # ── Models ────────────────────────────────────────────────────────
 class SpoonCheckIn(BaseModel):
@@ -999,6 +1068,81 @@ async def get_brain_dumps():
     ).fetchall()
     conn.close()
     return {"dumps": [dict(r) for r in rows]}
+
+# ── Pacing ────────────────────────────────────────────────
+
+@app.get("/api/pacing/envelope")
+async def pacing_envelope():
+    conn = get_db()
+    state = conn.execute("SELECT * FROM daily_state WHERE id = (SELECT MAX(id) FROM daily_state)").fetchone()
+    tasks = conn.execute("SELECT COUNT(*) as cnt FROM tasks WHERE status != 'done'").fetchone()
+    energy_log = conn.execute("SELECT spoons_remaining FROM energy_log ORDER BY timestamp DESC LIMIT 7").fetchall()
+    conn.close()
+    current = state["remaining_spoons"] / max(state["total_spoons"], 1) * 100 if state else 50
+    history = [e["spoons_remaining"] * 10 for e in energy_log]
+    return energy_envelope(current, tasks["cnt"] if tasks else 0, history)
+
+@app.get("/api/pacing/boom-bust")
+async def boom_bust():
+    conn = get_db()
+    energy_log = conn.execute("SELECT spoons_remaining FROM energy_log ORDER BY timestamp DESC LIMIT 7").fetchall()
+    conn.close()
+    history = [e["spoons_remaining"] * 10 for e in energy_log]
+    return detect_boom_bust(history)
+
+# ── Dopamine Menu ─────────────────────────────────────────
+
+@app.get("/api/dopamine-menu")
+async def get_dopamine_menu():
+    conn = get_db()
+    items = conn.execute("SELECT * FROM dopamine_menu_items ORDER BY sort_order").fetchall()
+    conn.close()
+    menu = {"starters": [], "sides": [], "mains": [], "desserts": []}
+    for item in items:
+        d = dict(item)
+        cat = d.pop("category")
+        if cat in menu:
+            menu[cat].append(d)
+    return menu
+
+@app.post("/api/dopamine-menu")
+async def add_dopamine_item(data: dict):
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO dopamine_menu_items (id, name, category, energy_required, sort_order) VALUES (?, ?, ?, ?, ?)",
+        (str(uuid.uuid4()), data["name"], data["category"], data.get("energy_required", 0.5), data.get("sort_order", 99)),
+    )
+    conn.commit()
+    conn.close()
+    return {"status": "ok"}
+
+@app.delete("/api/dopamine-menu/{item_id}")
+async def delete_dopamine_item(item_id: str):
+    conn = get_db()
+    conn.execute("DELETE FROM dopamine_menu_items WHERE id = ?", (item_id,))
+    conn.commit()
+    conn.close()
+    return {"status": "ok"}
+
+# ── Interoception ─────────────────────────────────────────
+
+@app.post("/api/interoception")
+async def log_interoception(data: dict):
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO interoception_log (id, signals, mood, note) VALUES (?, ?, ?, ?)",
+        (str(uuid.uuid4()), json.dumps(data.get("signals", [])), data.get("mood", ""), data.get("note", "")),
+    )
+    conn.commit()
+    conn.close()
+    return {"status": "ok"}
+
+@app.get("/api/interoception")
+async def get_interoception():
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM interoception_log ORDER BY created_at DESC LIMIT 20").fetchall()
+    conn.close()
+    return {"logs": [dict(r) for r in rows]}
 
 # ── Serve Frontend ────────────────────────────────────────────────
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"

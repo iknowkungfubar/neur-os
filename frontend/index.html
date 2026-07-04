@@ -186,6 +186,26 @@
   <a onclick="passiveDismiss()" class="text-dim text-sm" style="cursor:pointer;display:block;text-align:center;margin-top:8px">Dismiss</a>
 </div>
 
+<div id="dopamine-overlay" class="hidden" style="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:999;max-width:400px;width:90%;background:var(--bg-card);border-radius:var(--radius);padding:16px;box-shadow:0 4px 20px rgba(0,0,0,0.2);max-height:60vh;overflow-y:auto">
+  <h3 class="mb-8">What would feel good?</h3>
+  <div id="dopamine-list"></div>
+  <div class="mt-8"><a onclick="dismissDopamineMenu()" class="text-dim text-sm" style="cursor:pointer">Close</a></div>
+</div>
+
+<div id="interoception-overlay" class="hidden" style="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:999;max-width:360px;width:90%;background:var(--bg-card);border-radius:var(--radius);padding:16px;box-shadow:0 4px 20px rgba(0,0,0,0.2)">
+  <h3 class="mb-8">What do you notice right now?</h3>
+  <div class="flex gap-4 flex-wrap mb-8" id="interoception-signals">
+    <button class="btn btn-sm btn-outline" onclick="logInteroception('hungry')">🌮 Hungry</button>
+    <button class="btn btn-sm btn-outline" onclick="logInteroception('thirsty')">💧 Thirsty</button>
+    <button class="btn btn-sm btn-outline" onclick="logInteroception('tired')">😴 Tired</button>
+    <button class="btn btn-sm btn-outline" onclick="logInteroception('achy')">🤕 Achy</button>
+    <button class="btn btn-sm btn-outline" onclick="logInteroception('buzzing')">⚡ Buzzing</button>
+    <button class="btn btn-sm btn-outline" onclick="logInteroception('numb')">🧊 Numb</button>
+    <button class="btn btn-sm btn-outline" onclick="logInteroception('cant-tell')">❓ Can't tell</button>
+  </div>
+  <a onclick="dismissInteroception()" class="text-dim text-sm" style="cursor:pointer;display:block;text-align:center">Skip</a>
+</div>
+
 <div class="app" id="app">
 <!-- Onboarding -->
 <div class="card" id="onboarding-card" style="display:none">
@@ -223,6 +243,11 @@
       <button class="btn btn-green" onclick="submitBrainDump()">That works</button>
     </div>
     <div id="brain-dump-result" class="hidden mt-8"></div>
+  </div>
+
+  <div class="flex gap-8 mt-4">
+    <button class="btn btn-sm btn-outline" onclick="showDopamineMenu()" title="Need a boost?">🎮 Boost</button>
+    <button class="btn btn-sm btn-outline" onclick="showInteroception()" title="How are you feeling?">🧠 Check in</button>
   </div>
 
   <!-- Tab Bar -->
@@ -1058,6 +1083,48 @@ async function passiveSubmit() {
 
 function passiveDismiss() {
   document.getElementById('passive-overlay').classList.add('hidden');
+}
+
+// ── Dopamine Menu ──
+
+async function showDopamineMenu() {
+  const el = document.getElementById('dopamine-overlay');
+  const list = document.getElementById('dopamine-list');
+  try {
+    const resp = await fetch('/api/dopamine-menu');
+    const menu = await resp.json();
+    let html = '';
+    const labels = {starters: '🌟 Quick (2 min)', sides: '🎧 With something', mains: '🌿 Restorative', desserts: '🍪 Guilty pleasure'};
+    for (const [cat, items] of Object.entries(menu)) {
+      if (items.length) {
+        html += `<h4 class="text-sm text-dim mt-4 mb-4">${labels[cat] || cat}</h4>`;
+        items.forEach(i => { html += `<div class="flex justify-between items-center mb-4"><span>${i.name}</span><span class="text-dim text-xs">${i.energy_required} energy</span></div>`; });
+      }
+    }
+    list.innerHTML = html;
+  } catch(e) { list.innerHTML = '<p class="text-dim">Could not load menu</p>'; }
+  el.classList.remove('hidden');
+}
+function dismissDopamineMenu() {
+  document.getElementById('dopamine-overlay').classList.add('hidden');
+}
+
+// ── Interoception ──
+
+async function logInteroception(signal) {
+  try {
+    await fetch('/api/interoception', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({signals: [signal], mood: ''})
+    });
+  } catch(e) {}
+  document.getElementById('interoception-overlay').classList.add('hidden');
+}
+function showInteroception() {
+  document.getElementById('interoception-overlay').classList.remove('hidden');
+}
+function dismissInteroception() {
+  document.getElementById('interoception-overlay').classList.add('hidden');
 }
 
 // ── Brain Dump ──
