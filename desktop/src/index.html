@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NeurOS</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #1f1a17; }
+    iframe { width: 100vw; height: 100vh; border: none; }
+  </style>
+</head>
+<body>
+  <iframe src="http://localhost:7447"></iframe>
+  <script>
+    // Periodically check if server is up
+    function checkServer() {
+      fetch('http://localhost:7447/api/state')
+        .then(r => r.json())
+        .then(() => { /* server is up */ })
+        .catch(() => setTimeout(checkServer, 1000));
+    }
+    setTimeout(checkServer, 2000);
+  </script>
+</body>
+</html>

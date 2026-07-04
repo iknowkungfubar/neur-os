@@ -1,0 +1,41 @@
+{
+  "productName": "NeurOS",
+  "version": "0.4.0",
+  "identifier": "com.neuros.app",
+  "build": {
+    "frontendDist": "../src",
+    "devUrl": "http://localhost:7447",
+    "beforeBuildCommand": "cp -r ../../frontend/* ./",
+    "beforeDevCommand": ""
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "NeurOS",
+        "width": 720,
+        "height": 900,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png"
+    ],
+    "linux": {
+      "deb": {
+        "depends": ["python3"]
+      }
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "identifier": "default",
+  "description": "Standard capabilities for NeurOS",
+  "windows": ["main"],
+  "permissions": [
+    "core:default"
+  ]
+}
