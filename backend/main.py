@@ -1,28 +1,36 @@
-# neur-os backend v0.3
+# neur-os backend v1.0
 """
 Neuro-Affirming Cognitive Prosthetic — Backend API
 Local-first, privacy-preserving, trauma-informed.
-Traffic-light pacing, single-task focus, wind-down, body doubling.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import sqlite3
-import shutil
+import re
 import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
-# ── Config ────────────────────────────────────────────────────────
+from backend.domain.entities import EnergyBattery, Task, BrainDump
+from backend.domain.usecases import energy_envelope, detect_boom_bust, parse_llm_json, analyze_energy_patterns
+from backend.store import DataStore, SqliteStore
+from backend.response import ok, err
+
+# ponytail: backward compat — tests import init_db.
+def init_db():
+    from backend.store import SqliteStore
+    s = SqliteStore(DB_PATH); s.init_schema(); s._seed_defaults()
+
+# ── Config ──
 DATA_DIR = Path(__file__).parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
 DB_PATH = DATA_DIR / "neur-os.db"
@@ -33,276 +41,71 @@ SOUNDSCAPES_DIR.mkdir(exist_ok=True)
 LM_STUDIO_URL = os.getenv("LM_STUDIO_URL", "http://localhost:1234/v1")
 LM_MODEL = os.getenv("LM_MODEL", "qwythos-9b-claude-mythos-5-1m")
 
-app = FastAPI(title="NeurOS", version="0.3.0")
+app = FastAPI(title="NeurOS", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# ── Database ──────────────────────────────────────────────────────
-def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+# ── Store — global instance, swap for tests ──
+_store: DataStore | None = None
 
-def init_db():
-    conn = get_db()
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS daily_state (
-            id TEXT PRIMARY KEY,
-            date TEXT NOT NULL UNIQUE,
-            total_spoons INTEGER NOT NULL DEFAULT 10,
-            remaining_spoons REAL NOT NULL DEFAULT 10,
-            pain_level INTEGER DEFAULT 0,
-            notes TEXT DEFAULT '',
-            mode TEXT DEFAULT 'green'
-        );
-        CREATE TABLE IF NOT EXISTS tasks (
-            id TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            description TEXT DEFAULT '',
-            spoon_cost REAL DEFAULT 1,
-            micro_chunks TEXT DEFAULT '[]',
-            status TEXT DEFAULT 'active',
-            energy_tag TEXT DEFAULT 'medium',
-            recurring TEXT DEFAULT '',
-            created_at TEXT DEFAULT (datetime('now')),
-            completed_at TEXT
-        );
-        CREATE TABLE IF NOT EXISTS energy_log (
-            id TEXT PRIMARY KEY,
-            timestamp TEXT DEFAULT (datetime('now')),
-            spoons_remaining REAL NOT NULL,
-            pain_level INTEGER DEFAULT 0,
-            note TEXT DEFAULT ''
-        );
-        CREATE TABLE IF NOT EXISTS crisis_log (
-            id TEXT PRIMARY KEY,
-            timestamp TEXT DEFAULT (datetime('now')),
-            crisis_type TEXT NOT NULL,
-            triggered_by TEXT DEFAULT 'manual',
-            resolved_at TEXT
-        );
-        CREATE TABLE IF NOT EXISTS timer_sessions (
-            id TEXT PRIMARY KEY,
-            task_id TEXT,
-            duration_minutes INTEGER NOT NULL DEFAULT 25,
-            elapsed_seconds INTEGER NOT NULL DEFAULT 0,
-            status TEXT DEFAULT 'running',
-            started_at TEXT DEFAULT (datetime('now')),
-            paused_at TEXT,
-            completed_at TEXT,
-            soundscape TEXT DEFAULT '',
-            body_doubling INTEGER DEFAULT 0,
-            started_as TEXT DEFAULT 'focus'
-        );
-        CREATE TABLE IF NOT EXISTS habits (
-            id TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            description TEXT DEFAULT '',
-            frequency TEXT DEFAULT 'daily',
-            spoon_cost REAL DEFAULT 0.5,
-            energy_tag TEXT DEFAULT 'low',
-            grace_period INTEGER DEFAULT 3,  -- Free Days: can miss this many times
-            last_completed TEXT,
-            created_at TEXT DEFAULT (datetime('now'))
-        );
-        CREATE TABLE IF NOT EXISTS soundscape_config (
-            id TEXT PRIMARY KEY,
-            mode TEXT NOT NULL UNIQUE,
-            sound_file TEXT DEFAULT '',
-            volume REAL DEFAULT 0.5,
-            loop INTEGER DEFAULT 1
-        );
-        CREATE TABLE IF NOT EXISTS wind_down (
-            id TEXT PRIMARY KEY,
-            date TEXT NOT NULL UNIQUE,
-            went_well TEXT DEFAULT '',
-            drained TEXT DEFAULT '',
-            tomorrow_one TEXT DEFAULT '',
-            note TEXT DEFAULT '',
-            created_at TEXT DEFAULT (datetime('now'))
-        );
-        CREATE TABLE IF NOT EXISTS passive_log (
-            id TEXT PRIMARY KEY,
-            timestamp TEXT DEFAULT (datetime('now')),
-            response TEXT NOT NULL,
-            spoons_at_time REAL,
-            current_task_id TEXT,
-            source TEXT DEFAULT 'notification'
-        );
-        CREATE TABLE IF NOT EXISTS onboarding_state (
-            id TEXT PRIMARY KEY DEFAULT 'current',
-            phase INTEGER DEFAULT 0,
-            turns INTEGER DEFAULT 0,
-            extracted_profile TEXT DEFAULT '{}',
-            created_at TEXT DEFAULT (datetime('now')),
-            updated_at TEXT DEFAULT (datetime('now'))
-        );
-        CREATE TABLE IF NOT EXISTS brain_dumps (
-            id TEXT PRIMARY KEY,
-            raw_text TEXT NOT NULL,
-            structured_json TEXT DEFAULT '{}',
-            source TEXT DEFAULT 'textarea',
-            created_at TEXT DEFAULT (datetime('now'))
-        );
-        CREATE TABLE IF NOT EXISTS dopamine_menu_items (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            category TEXT NOT NULL,
-            energy_required REAL DEFAULT 0.5,
-            sort_order INTEGER DEFAULT 0,
-            created_at TEXT DEFAULT (datetime('now'))
-        );
-        CREATE TABLE IF NOT EXISTS interoception_log (
-            id TEXT PRIMARY KEY,
-            signals TEXT NOT NULL,
-            mood TEXT DEFAULT '',
-            note TEXT DEFAULT '',
-            created_at TEXT DEFAULT (datetime('now'))
-        );
-        -- Phase 5: E2EE sync relay (server stores opaque encrypted blobs)
-        CREATE TABLE IF NOT EXISTS sync_data (
-            id TEXT PRIMARY KEY,
-            device_id TEXT NOT NULL,
-            collection TEXT NOT NULL,
-            encrypted_blob TEXT NOT NULL,
-            blob_version INTEGER DEFAULT 1,
-            created_at TEXT DEFAULT (datetime('now'))
-        );
-        CREATE INDEX IF NOT EXISTS idx_sync_device ON sync_data(device_id, collection);
-        -- Phase 5: Admin night rooms
-        CREATE TABLE IF NOT EXISTS admin_room_state (
-            room_id TEXT PRIMARY KEY,
-            timer_running INTEGER DEFAULT 0,
-            timer_elapsed INTEGER DEFAULT 0,
-            timer_started_at TEXT,
-            created_at TEXT DEFAULT (datetime('now')),
-            updated_at TEXT DEFAULT (datetime('now'))
-        );
-    """)
-    # Seed default soundscape configs
-    default_sounds = [
-        ("focus", "brown_noise.wav", 0.3, 1),
-        ("grounding", "rain.wav", 0.4, 1),
-        ("crisis", "breathing_tone.wav", 0.2, 1),
-    ]
-    for mode, sound, vol, loop in default_sounds:
-        conn.execute(
-            "INSERT OR IGNORE INTO soundscape_config (id, mode, sound_file, volume, loop) VALUES (?, ?, ?, ?, ?)",
-            (str(uuid.uuid4()), mode, sound, vol, loop),
-        )
-    # Seed default dopamine menu items
-    defaults = [
-        ("Deep breaths (2 min)", "starters", 0.2, 1),
-        ("Stretch break", "starters", 0.3, 2),
-        ("Listen to a song", "starters", 0.3, 3),
-        ("Podcast while cleaning", "sides", 0.5, 1),
-        ("Fidget toy during meeting", "sides", 0.4, 2),
-        ("Body doubling (virtual)", "sides", 0.5, 3),
-        ("Walk outside", "mains", 2.0, 1),
-        ("Nap or rest", "mains", 1.5, 2),
-        ("Creative project", "mains", 2.5, 3),
-        ("Guilty pleasure show", "desserts", 1.0, 1),
-        ("Doomscroll (timered)", "desserts", 0.5, 2),
-        ("Online window shopping", "desserts", 0.5, 3),
-    ]
-    for name, cat, energy, order in defaults:
-        conn.execute(
-            "INSERT OR IGNORE INTO dopamine_menu_items (id, name, category, energy_required, sort_order) VALUES (?, ?, ?, ?, ?)",
-            (str(uuid.uuid4()), name, cat, energy, order),
-        )
-    conn.commit()
-    conn.close()
+def reset_store():
+    """Clear the cached store (used by tests to force re-init)."""
+    global _store
+    _store = None
 
-init_db()
+def set_store(store: DataStore):
+    """Swap the global store (used by tests to inject InMemoryStore)."""
+    global _store
+    _store = store
 
-# ── Domain Services ─────────────────────────────────
-from backend.domain.entities import EnergyBattery, Task, BrainDump
-from backend.domain.usecases import energy_envelope, detect_boom_bust, parse_llm_json, analyze_energy_patterns
+def get_store() -> DataStore:
+    global _store
+    if _store is None:
+        s = SqliteStore(DB_PATH)
+        s.init_schema()
+        s._seed_defaults()
+        _store = s
+    return _store
 
-# ── Models ────────────────────────────────────────────────────────
+# ── Models ──
 class SpoonCheckIn(BaseModel):
-    spoons: int
-    pain_level: int = 0
-    note: str = ""
-
+    spoons: int; pain_level: int = 0; note: str = ""
 class TaskCreate(BaseModel):
-    title: str
-    description: str = ""
-    spoon_cost: Optional[float] = None
-    energy_tag: str = "medium"
-    recurring: str = ""
-
+    title: str; description: str = ""; spoon_cost: Optional[float] = None
+    energy_tag: str = "medium"; recurring: str = ""
 class TaskUpdate(BaseModel):
-    status: Optional[str] = None
-    spoon_cost: Optional[float] = None
+    status: Optional[str] = None; spoon_cost: Optional[float] = None
     micro_chunks: Optional[list[str]] = None
-
 class HabitCreate(BaseModel):
-    title: str
-    description: str = ""
-    frequency: str = "daily"
-    spoon_cost: float = 0.5
-    energy_tag: str = "low"
-
+    title: str; description: str = ""; frequency: str = "daily"
+    spoon_cost: float = 0.5; energy_tag: str = "low"
 class TimerAction(BaseModel):
-    task_id: Optional[str] = None
-    duration_minutes: int = 25
-    action: str = "start"
-    soundscape: str = ""
-    body_doubling: bool = False
-    started_as: str = "focus"
-    count_up: bool = True  # Count-up timer by default (no reset needed)
-
+    task_id: Optional[str] = None; duration_minutes: int = 25; action: str = "start"
+    soundscape: str = ""; body_doubling: bool = False; started_as: str = "focus"; count_up: bool = True
 class WindDownEntry(BaseModel):
-    went_well: str = ""
-    drained: str = ""
-    tomorrow_one: str = ""
-    note: str = ""
-
+    went_well: str = ""; drained: str = ""; tomorrow_one: str = ""; note: str = ""
 class ModeUpdate(BaseModel):
-    mode: str  # green, amber, red
-
+    mode: str
 class SoundscapeUpdate(BaseModel):
-    sound_file: Optional[str] = None
-    volume: Optional[float] = None
-    loop: Optional[bool] = None
-
+    sound_file: Optional[str] = None; volume: Optional[float] = None; loop: Optional[bool] = None
 class BrainDumpRequest(BaseModel):
-    text: str
-    source: str = "textarea"
-    declarative: bool = False  # ponytail: pipe through declarative rewrite before organizing
-
+    text: str; source: str = "textarea"; declarative: bool = False
 class LLMRequest(BaseModel):
     prompt: str
-
 class PassiveLogSubmit(BaseModel):
-    response: str
-    spoons_at_time: Optional[float] = None
-    current_task_id: Optional[str] = None
-    source: str = "notification"
-
+    response: str; spoons_at_time: Optional[float] = None
+    current_task_id: Optional[str] = None; source: str = "notification"
 class CrisisCheck(BaseModel):
-    cognitive_load: float = 0.0
-    frustration_markers: float = 0.0
-    error_rate: float = 0.0
-
+    cognitive_load: float = 0.0; frustration_markers: float = 0.0; error_rate: float = 0.0
 class OnboardingChat(BaseModel):
-    history: list[dict] = []
-    turn: int = 0
+    history: list[dict] = []; turn: int = 0
 
-# ── LLM Client ────────────────────────────────────────────────────
+# ── LLM Client ──
 async def call_llm(system: str, user: str, max_tokens: int = 512, model: str = "") -> str:
-    """Call LM Studio's local LLM endpoint with fast timeout."""
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=2.0)) as client:
             payload = {
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                "max_tokens": max_tokens,
-                "temperature": 0.1,
+                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                "max_tokens": max_tokens, "temperature": 0.1,
             }
             if LM_MODEL or model:
                 payload["model"] = model or LM_MODEL
@@ -314,955 +117,443 @@ async def call_llm(system: str, user: str, max_tokens: int = 512, model: str = "
     except Exception as e:
         return f"[LLM error: {e}]"
 
-# ── Energy Tags ───────────────────────────────────────────────────
 ENERGY_TAGS = {"low": 0.5, "medium": 1.0, "high": 2.0}
 
-# ── Check-In ──────────────────────────────────────────────────────
+# ── Check-In ──
 @app.post("/api/check-in")
-async def morning_checkin(data: SpoonCheckIn):
-    conn = get_db()
+async def morning_checkin(data: SpoonCheckIn, store: DataStore = Depends(get_store)):
     today = date.today().isoformat()
-    existing = conn.execute("SELECT id FROM daily_state WHERE date = ?", (today,)).fetchone()
-    # Auto-suggest mode based on spoons
     suggested_mode = "green"
-    if data.spoons <= 3:
-        suggested_mode = "red"
-    elif data.spoons <= 5:
-        suggested_mode = "amber"
+    if data.spoons <= 3: suggested_mode = "red"
+    elif data.spoons <= 5: suggested_mode = "amber"
+    store.upsert_state(today, {"total_spoons": data.spoons, "remaining_spoons": data.spoons,
+                                "pain_level": data.pain_level, "notes": data.note, "mode": suggested_mode})
+    store.log_energy(data.spoons, data.pain_level, data.note)
+    return ok({"spoons": data.spoons, "pain_level": data.pain_level, "suggested_mode": suggested_mode})
 
-    if existing:
-        conn.execute(
-            "UPDATE daily_state SET total_spoons = ?, remaining_spoons = ?, pain_level = ?, notes = ? WHERE date = ?",
-            (data.spoons, data.spoons, data.pain_level, data.note, today),
-        )
-    else:
-        conn.execute(
-            "INSERT INTO daily_state (id, date, total_spoons, remaining_spoons, pain_level, notes, mode) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (str(uuid.uuid4()), today, data.spoons, data.spoons, data.pain_level, data.note, suggested_mode),
-        )
-    conn.execute(
-        "INSERT INTO energy_log (id, spoons_remaining, pain_level, note) VALUES (?, ?, ?, ?)",
-        (str(uuid.uuid4()), data.spoons, data.pain_level, data.note),
-    )
-    conn.commit()
-    conn.close()
-    return {"status": "ok", "spoons": data.spoons, "pain_level": data.pain_level, "suggested_mode": suggested_mode}
-
-# ── Mode (Traffic Light) ─────────────────────────────────────────
+# ── Mode ──
 @app.get("/api/mode")
-async def get_mode():
-    conn = get_db()
-    today = date.today().isoformat()
-    state = conn.execute("SELECT mode FROM daily_state WHERE date = ?", (today,)).fetchone()
-    conn.close()
-    return {"mode": state["mode"] if state else "green"}
+async def get_mode(store: DataStore = Depends(get_store)):
+    return ok({"mode": store.get_state()["mode"]})
 
 @app.put("/api/mode")
-async def set_mode(data: ModeUpdate):
+async def set_mode(data: ModeUpdate, store: DataStore = Depends(get_store)):
     if data.mode not in ("green", "amber", "red"):
         raise HTTPException(400, "Mode must be green, amber, or red")
-    conn = get_db()
     today = date.today().isoformat()
-    existing = conn.execute("SELECT id FROM daily_state WHERE date = ?", (today,)).fetchone()
-    if existing:
-        conn.execute("UPDATE daily_state SET mode = ? WHERE date = ?", (data.mode, today))
-    else:
-        conn.execute(
-            "INSERT INTO daily_state (id, date, total_spoons, remaining_spoons, mode) VALUES (?, ?, ?, ?, ?)",
-            (str(uuid.uuid4()), today, 10, 10, data.mode),
-        )
-    conn.commit()
-    conn.close()
-    return {"mode": data.mode, "status": "ok"}
+    store.set_mode(today, data.mode)
+    return ok({"mode": data.mode})
 
-# ── State ─────────────────────────────────────────────────────────
+# ── State ──
 @app.get("/api/state")
-async def get_state():
-    conn = get_db()
+async def get_state(store: DataStore = Depends(get_store)):
     today = date.today().isoformat()
-    state = conn.execute("SELECT * FROM daily_state WHERE date = ?", (today,)).fetchone()
-    tasks = conn.execute(
-        "SELECT * FROM tasks WHERE status = 'active' ORDER BY energy_tag, created_at"
-    ).fetchall()
-    active_timer = conn.execute(
-        "SELECT * FROM timer_sessions WHERE status IN ('running','paused') ORDER BY started_at DESC LIMIT 1"
-    ).fetchone()
-    conn.close()
-    return {
-        "state": dict(state) if state else {"total_spoons": 10, "remaining_spoons": 10, "pain_level": 0, "mode": "green"},
-        "tasks": [dict(t) for t in tasks],
-        "active_timer": dict(active_timer) if active_timer else None,
-    }
+    state = store.get_state(today)
+    tasks = [t for t in store.get_tasks("active")]
+    timer = store.get_active_timer()
+    return ok({"state": state, "tasks": tasks, "active_timer": timer})
 
-# ── Next Task (single-task focus) ─────────────────────────────────
+# ── Next Task ──
 @app.get("/api/tasks/next")
-async def get_next_task():
-    """Return the single best task for the current energy level."""
-    conn = get_db()
+async def get_next_task(store: DataStore = Depends(get_store)):
     today = date.today().isoformat()
-    state = conn.execute("SELECT * FROM daily_state WHERE date = ?", (today,)).fetchone()
-    mode = state["mode"] if state else "green"
-    remaining = state["remaining_spoons"] if state else 10
-
-    # Different task selection per mode
+    state = store.get_state(today)
+    mode, remaining = state.get("mode", "green"), state.get("remaining_spoons", 10)
     if mode == "red":
-        # Red = show no tasks, suggest rest
-        conn.close()
-        return {"task": None, "mode": "red", "message": "Today might be a rest day. That's okay."}
+        return ok({"task": None, "mode": "red", "message": "Today might be a rest day. That's okay."})
+    task = store.next_task(mode, remaining)
+    return ok({"task": task, "mode": mode, "message": None if task else "No tasks fit your current energy."})
 
-    # Get active tasks sorted by best match
-    if mode == "amber":
-        # Amber = low-spoon tasks first
-        tasks = conn.execute(
-            "SELECT * FROM tasks WHERE status = 'active' AND spoon_cost <= ? AND energy_tag IN ('low','medium') ORDER BY spoon_cost ASC, created_at ASC",
-            (min(remaining, 2),),
-        ).fetchall()
-    else:
-        # Green = highest spoon task you can afford (use energy while you have it)
-        tasks = conn.execute(
-            "SELECT * FROM tasks WHERE status = 'active' AND spoon_cost <= ? ORDER BY spoon_cost DESC, created_at ASC",
-            (remaining,),
-        ).fetchall()
-
-    conn.close()
-    if not tasks:
-        return {"task": None, "mode": mode, "message": "No tasks fit your current energy."}
-    return {"task": dict(tasks[0]), "mode": mode, "message": None}
-
-# ── Tasks ─────────────────────────────────────────────────────────
+# ── Tasks ──
 @app.post("/api/tasks")
-async def create_task(task: TaskCreate):
-    task_id = str(uuid.uuid4())
+async def create_task(task: TaskCreate, store: DataStore = Depends(get_store)):
     spoon_cost = task.spoon_cost or ENERGY_TAGS.get(task.energy_tag, 1.0)
-
     if task.spoon_cost is None:
-        system = "Estimate spoon cost (1-5). 1=easy, 5=exhausting. Reply with JUST a number."
-        user = f"Task: {task.title}. {task.description}"
-        llm_response = await call_llm(system, user, max_tokens=10)
-        try:
-            parsed = float(llm_response.strip())
-            spoon_cost = max(0.5, min(5.0, parsed))
-        except (ValueError, TypeError):
-            pass
-
-    system = "Break this task into 2-4 tiny actionable micro-steps. Return as JSON array of strings."
-    user = f"Task: {task.title}. {task.description}"
-    chunk_response = await call_llm(system, user, max_tokens=300)
-    # ponytail: strip think/reasoning tags before parsing
-    import re
+        resp = await call_llm("Estimate spoon cost (1-5). 1=easy, 5=exhausting. Reply with JUST a number.",
+                              f"Task: {task.title}. {task.description}", max_tokens=10)
+        try: spoon_cost = max(0.5, min(5.0, float(resp.strip())))
+        except (ValueError, TypeError): pass
+    chunk_response = await call_llm(
+        "Break this task into 2-4 tiny actionable micro-steps. Return as JSON array of strings.",
+        f"Task: {task.title}. {task.description}", max_tokens=300)
     chunk_response = re.sub(r'<think>.*?</think>', '', chunk_response, flags=re.DOTALL).strip()
     micro_chunks = []
     try:
-        parsed = chunk_response.strip()
-        if parsed.startswith("["):
-            micro_chunks = json.loads(parsed)
-        elif parsed.startswith("```"):
-            cleaned = parsed.strip("`").removeprefix("json").strip()
+        cleaned = chunk_response.strip()
+        if cleaned.startswith("["):
             micro_chunks = json.loads(cleaned)
+        elif cleaned.startswith("```"):
+            micro_chunks = json.loads(cleaned.strip("`").removeprefix("json").strip())
         else:
-            micro_chunks = [line.strip("- ").strip() for line in parsed.split("\n") if line.strip()]
+            micro_chunks = [line.strip("- ").strip() for line in cleaned.split("\n") if line.strip()]
     except (json.JSONDecodeError, Exception):
         micro_chunks = [f"Start: {task.title}"]
-
-    conn = get_db()
-    conn.execute(
-        "INSERT INTO tasks (id, title, description, spoon_cost, micro_chunks, energy_tag, recurring) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (task_id, task.title, task.description, spoon_cost, json.dumps(micro_chunks), task.energy_tag, task.recurring),
-    )
-    conn.commit()
-    conn.close()
-    return {"id": task_id, "spoon_cost": spoon_cost, "micro_chunks": micro_chunks}
+    task_id = store.create_task({"title": task.title, "description": task.description,
+                                  "spoon_cost": spoon_cost, "micro_chunks": micro_chunks,
+                                  "energy_tag": task.energy_tag, "recurring": task.recurring})
+    return ok(task_id)
 
 @app.patch("/api/tasks/{task_id}")
-async def update_task(task_id: str, update: TaskUpdate):
-    conn = get_db()
-    task = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-    if not task:
+async def update_task(task_id: str, update: TaskUpdate, store: DataStore = Depends(get_store)):
+    if not store.update_task(task_id, update.dict(exclude_unset=True)):
         raise HTTPException(404, "Task not found")
-    if update.status == "completed":
-        conn.execute("UPDATE tasks SET status = ?, completed_at = datetime('now') WHERE id = ?", ("completed", task_id))
-    if update.spoon_cost is not None:
-        conn.execute("UPDATE tasks SET spoon_cost = ? WHERE id = ?", (update.spoon_cost, task_id))
-    if update.micro_chunks is not None:
-        conn.execute("UPDATE tasks SET micro_chunks = ? WHERE id = ?", (json.dumps(update.micro_chunks), task_id))
-    conn.commit()
-    conn.close()
-    return {"status": "updated"}
+    return ok({"status": "updated"})
 
 @app.post("/api/tasks/{task_id}/expend")
-async def expend_spoons(task_id: str):
-    conn = get_db()
-    task = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-    if not task:
-        raise HTTPException(404, "Task not found")
-    today = date.today().isoformat()
-    state = conn.execute("SELECT * FROM daily_state WHERE date = ?", (today,)).fetchone()
-    if state:
-        cost = task["spoon_cost"]
-        new_remaining = max(0, state["remaining_spoons"] - cost)
-        conn.execute("UPDATE daily_state SET remaining_spoons = ? WHERE date = ?", (new_remaining, today))
+async def expend_spoons(task_id: str, store: DataStore = Depends(get_store)):
+    result = store.complete_task(task_id)
+    if result.get("error"):
+        raise HTTPException(404, result["error"])
+    return ok(result)
 
-    conn.execute("UPDATE tasks SET status = 'completed', completed_at = datetime('now') WHERE id = ?", (task_id,))
-    conn.execute(
-        "INSERT INTO energy_log (id, spoons_remaining, note) VALUES (?, ?, ?)",
-        (str(uuid.uuid4()), state["remaining_spoons"] - task["spoon_cost"] if state else 0, f"Completed: {task['title']}"),
-    )
-    if task["recurring"]:
-        new_id = str(uuid.uuid4())
-        conn.execute(
-            "INSERT INTO tasks (id, title, description, spoon_cost, micro_chunks, energy_tag, recurring) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (new_id, task["title"], task["description"], task["spoon_cost"], task["micro_chunks"], task["energy_tag"], task["recurring"]),
-        )
-    conn.commit()
-    conn.close()
-    return {"status": "completed", "spoons_deducted": task["spoon_cost"]}
-
-# ── Habits ────────────────────────────────────────────────────────
+# ── Habits ──
 @app.get("/api/habits")
-async def get_habits():
-    conn = get_db()
+async def get_habits(store: DataStore = Depends(get_store)):
     today = date.today().isoformat()
-    habits = conn.execute(
-        "SELECT h.*, (h.last_completed = ?) AS done_today FROM habits h ORDER BY h.created_at",
-        (today,),
-    ).fetchall()
-    conn.close()
-    return {"habits": [dict(h) for h in habits]}
+    return ok({"habits": store.get_habits(today)})
 
 @app.post("/api/habits")
-async def create_habit(habit: HabitCreate):
-    hid = str(uuid.uuid4())
-    conn = get_db()
-    conn.execute(
-        "INSERT INTO habits (id, title, description, frequency, spoon_cost, energy_tag) VALUES (?, ?, ?, ?, ?, ?)",
-        (hid, habit.title, habit.description, habit.frequency, habit.spoon_cost, habit.energy_tag),
-    )
-    conn.commit()
-    conn.close()
-    return {"id": hid}
+async def create_habit(habit: HabitCreate, store: DataStore = Depends(get_store)):
+    hid = store.create_habit(habit.model_dump())
+    return ok({"id": hid})
 
 @app.post("/api/habits/{hid}/check")
-async def check_habit(hid: str):
-    """Mark a habit as completed today. No streaks or badges — just completion."""
-    conn = get_db()
-    habit = conn.execute("SELECT * FROM habits WHERE id = ?", (hid,)).fetchone()
-    if not habit:
+async def check_habit(hid: str, store: DataStore = Depends(get_store)):
+    if not store.get_habit(hid):
         raise HTTPException(404, "Habit not found")
     today = date.today().isoformat()
-    # Mark as completed — no streak tracking
-    conn.execute(
-        "UPDATE habits SET last_completed = ? WHERE id = ?",
-        (today, hid),
-    )
-    conn.commit()
-    conn.close()
-    return {"done_today": True}
+    store.check_habit(hid, today)
+    return ok({"done_today": True})
 
-# ── Timer / Focus Sessions ────────────────────────────────────────
+# ── Timer ──
 @app.post("/api/timer")
-async def timer_action(data: TimerAction):
-    conn = get_db()
+async def timer_action(data: TimerAction, store: DataStore = Depends(get_store)):
     if data.action == "start":
-        conn.execute("UPDATE timer_sessions SET status = 'stopped', completed_at = datetime('now') WHERE status IN ('running','paused')")
-        tid = str(uuid.uuid4())
-        conn.execute(
-            "INSERT INTO timer_sessions (id, task_id, duration_minutes, soundscape, body_doubling, started_as) VALUES (?, ?, ?, ?, ?, ?)",
-            (tid, data.task_id, data.duration_minutes, data.soundscape, 1 if data.body_doubling else 0, data.started_as),
-        )
-        conn.commit()
-        conn.close()
-        return {"id": tid, "status": "running", "duration_minutes": data.duration_minutes, "body_doubling": data.body_doubling, "started_as": data.started_as}
-
+        store.stop_all_timers()
+        return ok(store.create_timer(data.model_dump()))
     elif data.action == "pause":
-        current = conn.execute("SELECT * FROM timer_sessions WHERE status = 'running' ORDER BY started_at DESC LIMIT 1").fetchone()
-        if not current:
-            raise HTTPException(400, "No running timer")
+        t = store.get_active_timer()
+        if not t: raise HTTPException(400, "No running timer")
         try:
-            elapsed = int((datetime.utcnow() - datetime.strptime(current["started_at"][:19], "%Y-%m-%d %H:%M:%S")).total_seconds())
-        except ValueError:
-            elapsed = 0
-        total_elapsed = current["elapsed_seconds"] + elapsed
-        conn.execute("UPDATE timer_sessions SET status = 'paused', elapsed_seconds = ?, paused_at = datetime('now') WHERE id = ?",
-                     (total_elapsed, current["id"]))
-        conn.commit()
-        conn.close()
-        return {"id": current["id"], "status": "paused", "elapsed_seconds": total_elapsed}
-
+            elapsed = int((datetime.utcnow() - datetime.strptime(t["started_at"][:19], "%Y-%m-%d %H:%M:%S")).total_seconds())
+        except ValueError: elapsed = 0
+        total = t["elapsed_seconds"] + elapsed
+        store.update_timer(t["id"], {"status": "paused", "elapsed_seconds": total, "paused_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")})
+        return ok({"id": t["id"], "status": "paused", "elapsed_seconds": total})
     elif data.action == "resume":
-        current = conn.execute("SELECT * FROM timer_sessions WHERE status = 'paused' ORDER BY started_at DESC LIMIT 1").fetchone()
-        if not current:
-            raise HTTPException(400, "No paused timer")
-        conn.execute("UPDATE timer_sessions SET status = 'running', paused_at = NULL, started_at = datetime('now') WHERE id = ?", (current["id"],))
-        conn.commit()
-        conn.close()
-        return {"id": current["id"], "status": "running"}
-
+        t = store.get_active_timer()
+        if not t or t["status"] != "paused": raise HTTPException(400, "No paused timer")
+        store.update_timer(t["id"], {"status": "running", "paused_at": None, "started_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")})
+        return ok({"id": t["id"], "status": "running"})
     elif data.action == "stop":
-        current = conn.execute("SELECT * FROM timer_sessions WHERE status IN ('running','paused') ORDER BY started_at DESC LIMIT 1").fetchone()
-        if not current:
-            raise HTTPException(400, "No active timer")
+        t = store.get_active_timer()
+        if not t: raise HTTPException(400, "No active timer")
         elapsed = 0
-        if current["status"] == "running":
-            try:
-                elapsed = int((datetime.utcnow() - datetime.strptime(current["started_at"][:19], "%Y-%m-%d %H:%M:%S")).total_seconds())
-            except ValueError:
-                elapsed = 0
-        total_elapsed = current["elapsed_seconds"] + elapsed
-        conn.execute("UPDATE timer_sessions SET status = 'completed', elapsed_seconds = ?, completed_at = datetime('now') WHERE id = ?",
-                     (total_elapsed, current["id"]))
-        conn.commit()
-        conn.close()
-        return {"id": current["id"], "status": "completed", "elapsed_seconds": total_elapsed}
-
+        if t["status"] == "running":
+            try: elapsed = int((datetime.utcnow() - datetime.strptime(t["started_at"][:19], "%Y-%m-%d %H:%M:%S")).total_seconds())
+            except ValueError: pass
+        total = t["elapsed_seconds"] + elapsed
+        store.update_timer(t["id"], {"status": "completed", "elapsed_seconds": total, "completed_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")})
+        return ok({"id": t["id"], "status": "completed", "elapsed_seconds": total})
     raise HTTPException(400, "Invalid action")
 
 @app.get("/api/timer/active")
-async def get_active_timer():
-    conn = get_db()
-    timer = conn.execute("SELECT * FROM timer_sessions WHERE status IN ('running','paused') ORDER BY started_at DESC LIMIT 1").fetchone()
-    conn.close()
-    if not timer:
-        return {"timer": None}
-    elapsed = timer["elapsed_seconds"]
-    if timer["status"] == "running":
-        try:
-            elapsed += int((datetime.utcnow() - datetime.strptime(timer["started_at"][:19], "%Y-%m-%d %H:%M:%S")).total_seconds())
-        except ValueError:
-            pass
-    result = dict(timer)
-    result["current_elapsed"] = elapsed
-    return {"timer": result}
+async def get_active_timer(store: DataStore = Depends(get_store)):
+    return ok({"timer": store.get_active_timer()})
 
-# ── Wind-Down ─────────────────────────────────────────────────────
+# ── Wind-Down ──
 @app.post("/api/wind-down")
-async def save_wind_down(data: WindDownEntry):
-    conn = get_db()
+async def save_wind_down(data: WindDownEntry, store: DataStore = Depends(get_store)):
     today = date.today().isoformat()
-    existing = conn.execute("SELECT id FROM wind_down WHERE date = ?", (today,)).fetchone()
-    if existing:
-        conn.execute(
-            "UPDATE wind_down SET went_well = ?, drained = ?, tomorrow_one = ?, note = ? WHERE date = ?",
-            (data.went_well, data.drained, data.tomorrow_one, data.note, today),
-        )
-    else:
-        conn.execute(
-            "INSERT INTO wind_down (id, date, went_well, drained, tomorrow_one, note) VALUES (?, ?, ?, ?, ?, ?)",
-            (str(uuid.uuid4()), today, data.went_well, data.drained, data.tomorrow_one, data.note),
-        )
-    conn.commit()
-    conn.close()
-    return {"status": "ok", "date": today}
+    store.upsert_wind_down(today, data.model_dump(exclude_unset=True))
+    return ok({"date": today})
 
 @app.get("/api/wind-down/today")
-async def get_wind_down():
-    conn = get_db()
+async def get_wind_down(store: DataStore = Depends(get_store)):
     today = date.today().isoformat()
-    entry = conn.execute("SELECT * FROM wind_down WHERE date = ?", (today,)).fetchone()
-    conn.close()
-    return {"entry": dict(entry) if entry else None}
+    return ok({"entry": store.get_wind_down(today)})
 
 @app.get("/api/wind-down/week")
-async def get_week_wind_down():
-    conn = get_db()
+async def get_week_wind_down(store: DataStore = Depends(get_store)):
     week_ago = (date.today() - timedelta(days=7)).isoformat()
-    entries = conn.execute(
-        "SELECT * FROM wind_down WHERE date >= ? ORDER BY date DESC", (week_ago,)
-    ).fetchall()
-    conn.close()
-    return {"entries": [dict(e) for e in entries]}
+    return ok({"entries": store.week_wind_down(week_ago)})
 
-# ── Weekly Review ─────────────────────────────────────────────────
+# ── Weekly Review ──
 @app.get("/api/review/week")
-async def weekly_review():
-    conn = get_db()
-    week_ago = (date.today() - timedelta(days=7)).isoformat()
+async def weekly_review(store: DataStore = Depends(get_store)):
     today = date.today().isoformat()
-
-    energy_states = conn.execute(
-        "SELECT * FROM daily_state WHERE date >= ? AND date <= ? ORDER BY date", (week_ago, today)
-    ).fetchall()
-    completed = conn.execute(
-        "SELECT * FROM tasks WHERE completed_at IS NOT NULL AND date(completed_at) >= ? ORDER BY completed_at DESC", (week_ago,)
-    ).fetchall()
-    energy_entries = conn.execute(
-        "SELECT * FROM energy_log WHERE date(timestamp) >= ? ORDER BY timestamp", (week_ago,)
-    ).fetchall()
-    timer_sessions = conn.execute(
-        "SELECT * FROM timer_sessions WHERE date(started_at) >= ? ORDER BY started_at", (week_ago,)
-    ).fetchall()
-    crises = conn.execute(
-        "SELECT * FROM crisis_log WHERE date(timestamp) >= ? ORDER BY timestamp DESC", (week_ago,)
-    ).fetchall()
-    habits = conn.execute("SELECT title FROM habits ORDER BY created_at").fetchall()
-    wind_entries = conn.execute(
-        "SELECT * FROM wind_down WHERE date >= ? ORDER BY date DESC", (week_ago,)
-    ).fetchall()
-    conn.close()
-
-    avg_spoons = 0
-    avg_pain = 0
-    if energy_states:
-        avg_spoons = sum(float(s["total_spoons"]) for s in energy_states) / len(energy_states)
-        avg_pain = sum(s["pain_level"] for s in energy_states) / len(energy_states)
-
-    total_focus_minutes = 0
-    for ts in timer_sessions:
-        if ts["status"] in ("completed", "stopped"):
-            total_focus_minutes += ts["elapsed_seconds"] // 60
-
-    return {
-        "energy_states": [dict(s) for s in energy_states],
-        "completed_tasks": [dict(t) for t in completed],
-        "energy_entries": [dict(e) for e in energy_entries],
-        "timer_sessions": [dict(t) for t in timer_sessions],
-        "crises": [dict(c) for c in crises],
-        "habits": [dict(h) for h in habits],
-        "wind_down_entries": [dict(e) for e in wind_entries],
-        "insights": {
-            "days_tracked": len(energy_states),
-            "avg_spoons": round(avg_spoons, 1),
-            "avg_pain": round(avg_pain, 1),
-            "tasks_completed": len(completed),
-            "total_focus_minutes": total_focus_minutes,
-            "crisis_count": len(crises),
-        },
-    }
+    week_ago = (date.today() - timedelta(days=7)).isoformat()
+    return ok(store.weekly_review(week_ago, today))
 
 @app.get("/api/review/insight")
-async def generate_insight():
-    """Generate a weekly pattern insight from the data."""
-    conn = get_db()
+async def generate_insight(store: DataStore = Depends(get_store)):
     week_ago = (date.today() - timedelta(days=7)).isoformat()
+    return ok(store.review_insight(week_ago))
 
-    energy_states = conn.execute(
-        "SELECT * FROM daily_state WHERE date >= ? ORDER BY date", (week_ago,)
-    ).fetchall()
-    completed_tasks = conn.execute(
-        "SELECT title, energy_tag, spoon_cost FROM tasks WHERE completed_at IS NOT NULL AND date(completed_at) >= ?", (week_ago,)
-    ).fetchall()
-    wind_entries = conn.execute(
-        "SELECT * FROM wind_down WHERE date >= ? ORDER BY date", (week_ago,)
-    ).fetchall()
-    crises = conn.execute(
-        "SELECT date(timestamp) as d FROM crisis_log WHERE date(timestamp) >= ? ORDER BY timestamp", (week_ago,)
-    ).fetchall()
-
-    conn.close()
-
-    days_with_data = len(energy_states)
-    total_tasks = len(completed_tasks)
-    total_crises = len(crises)
-    high_spoon_tasks = sum(1 for t in completed_tasks if t["energy_tag"] == "high")
-
-    # Build the insight text locally (LLM-free)
-    lines = []
-    if days_with_data < 2:
-        lines.append("Not enough data yet — check in daily to see patterns emerge.")
-    else:
-        lines.append(f"**{days_with_data} days** tracked this week.")
-        if total_tasks > 0:
-            lines.append(f"Completed **{total_tasks} tasks** ({high_spoon_tasks} high-energy).")
-        else:
-            lines.append("No tasks completed this week — that's okay. Some weeks are for rest.")
-        if total_crises > 0:
-            lines.append(f"Crisis mode activated **{total_crises} time(s)** this week.")
-        if energy_states:
-            best_day = max(energy_states, key=lambda s: s["remaining_spoons"])
-            lines.append(f"Highest energy day: **{best_day['date']}** ({best_day['remaining_spoons']}/{best_day['total_spoons']} spoons).")
-            worst_day = min(energy_states, key=lambda s: s["remaining_spoons"])
-            if worst_day["remaining_spoons"] < best_day["remaining_spoons"]:
-                lines.append(f"Lowest energy day: **{worst_day['date']}** ({worst_day['remaining_spoons']}/{worst_day['total_spoons']} spoons).")
-        if wind_entries:
-            themes = []
-            for e in wind_entries:
-                if e["went_well"]:
-                    themes.append(e["went_well"].split(".")[0])
-            if themes:
-                lines.append(f"Recurring themes: {'; '.join(themes[:3])}.")
-
-    return {"insight": "\n".join(lines)}
-
-# ── Soundscapes ───────────────────────────────────────────────────
+# ── Soundscapes ──
 @app.get("/api/soundscapes")
 async def get_soundscapes():
-    conn = get_db()
+    import sqlite3
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
     configs = conn.execute("SELECT * FROM soundscape_config").fetchall()
-    available = []
-    if SOUNDSCAPES_DIR.exists():
-        available = sorted([f.name for f in SOUNDSCAPES_DIR.iterdir() if f.suffix in (".wav", ".ogg", ".mp3", ".flac")])
+    available = sorted([f.name for f in SOUNDSCAPES_DIR.iterdir() if f.suffix in (".wav", ".ogg", ".mp3", ".flac")]) if SOUNDSCAPES_DIR.exists() else []
     conn.close()
-    return {"configs": [dict(c) for c in configs], "available_sounds": available, "soundscape_dir": "/soundscapes/"}
+    return ok({"configs": [dict(c) for c in configs], "available_sounds": available, "soundscape_dir": "/soundscapes/"})
 
 @app.patch("/api/soundscapes/{mode}")
 async def update_soundscape(mode: str, update: SoundscapeUpdate):
-    conn = get_db()
+    import sqlite3
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
     existing = conn.execute("SELECT * FROM soundscape_config WHERE mode = ?", (mode,)).fetchone()
     if not existing:
+        conn.close()
         raise HTTPException(404, f"No config for mode '{mode}'")
-    sets = []
-    vals = []
-    if update.sound_file is not None:
-        sets.append("sound_file = ?")
-        vals.append(update.sound_file)
-    if update.volume is not None:
-        sets.append("volume = ?")
-        vals.append(max(0, min(1, update.volume)))
-    if update.loop is not None:
-        sets.append("loop = ?")
-        vals.append(1 if update.loop else 0)
-    if sets:
-        vals.append(mode)
-        conn.execute(f"UPDATE soundscape_config SET {', '.join(sets)} WHERE mode = ?", vals)
-    conn.commit()
-    conn.close()
-    return {"status": "updated", "mode": mode}
+    sets, vals = [], []
+    if update.sound_file is not None: sets.append("sound_file = ?"); vals.append(update.sound_file)
+    if update.volume is not None: sets.append("volume = ?"); vals.append(max(0, min(1, update.volume)))
+    if update.loop is not None: sets.append("loop = ?"); vals.append(1 if update.loop else 0)
+    if sets: vals.append(mode); conn.execute(f"UPDATE soundscape_config SET {', '.join(sets)} WHERE mode = ?", vals)
+    conn.commit(); conn.close()
+    return ok({"mode": mode})
 
-# ── Declarative Language ──────────────────────────────────────────
+# ── Declarative Language ──
 @app.post("/api/declarative")
 async def declarative_translate(req: LLMRequest):
-    system = (
-        "Translate imperative demands into declarative, non-coercive language. "
-        "Example: 'You must finish this report by Friday' → 'The report deadline is approaching on Friday.' "
-        "Never use 'you need to', 'you must', 'you should'. Keep it factual."
-    )
+    system = ("Translate imperative demands into declarative, non-coercive language. "
+              "Example: 'You must finish this report by Friday' → 'The report deadline is approaching on Friday.' "
+              "Never use 'you need to', 'you must', 'you should'. Keep it factual.")
     result = await call_llm(system, req.prompt, max_tokens=200)
-    return {"original": req.prompt, "declarative": result}
+    return ok({"original": req.prompt, "declarative": result})
 
-# ── Crisis Mode ───────────────────────────────────────────────────
+# ── Crisis Mode ──
 @app.post("/api/crisis/activate")
-async def activate_crisis():
-    crisis_id = str(uuid.uuid4())
-    conn = get_db()
-    conn.execute("INSERT INTO crisis_log (id, crisis_type) VALUES (?, ?)", (crisis_id, "sensory_overload"))
-    # Auto-switch to red mode
+async def activate_crisis(store: DataStore = Depends(get_store)):
+    cid = store.activate_crisis("sensory_overload")
     today = date.today().isoformat()
-    conn.execute("UPDATE daily_state SET mode = 'red' WHERE date = ?", (today,))
-    conn.commit()
-    conn.close()
-    return {
-        "crisis_id": crisis_id,
-        "status": "activated",
-        "actions": ["demand_eradication", "sensory_blackout", "grounding_mode"],
-    }
+    store.set_mode(today, "red")
+    return ok({"crisis_id": cid, "status": "activated", "actions": ["demand_eradication", "sensory_blackout", "grounding_mode"]})
 
 @app.post("/api/crisis/resolve")
-async def resolve_crisis():
-    conn = get_db()
-    current = conn.execute(
-        "SELECT id FROM crisis_log WHERE resolved_at IS NULL ORDER BY timestamp DESC LIMIT 1"
-    ).fetchone()
-    if current:
-        conn.execute("UPDATE crisis_log SET resolved_at = datetime('now') WHERE id = ?", (current["id"],))
-    conn.commit()
-    conn.close()
-    return {"status": "resolved"}
+async def resolve_crisis(store: DataStore = Depends(get_store)):
+    resolved = store.resolve_crisis()
+    return ok({"status": "resolved" if resolved else "none_active"})
 
 @app.get("/api/energy-log")
-async def get_energy_log():
-    conn = get_db()
-    rows = conn.execute("SELECT * FROM energy_log ORDER BY timestamp DESC LIMIT 30").fetchall()
-    conn.close()
-    return {"log": [dict(r) for r in rows]}
+async def get_energy_log(store: DataStore = Depends(get_store)):
+    return ok({"log": store.get_energy_log(30)})
 
-# ── Export ────────────────────────────────────────────────────────
+# ── Export ──
 @app.get("/api/export/json")
-async def export_json():
-    conn = get_db()
-    data = {}
-    for table in ["daily_state", "tasks", "energy_log", "crisis_log", "timer_sessions", "habits", "wind_down"]:
-        rows = conn.execute(f"SELECT * FROM {table}").fetchall()
-        data[table] = [dict(r) for r in rows]
-    conn.close()
-    return data
+async def export_json(store: DataStore = Depends(get_store)):
+    return store.export_all()
 
 @app.get("/api/export/markdown")
-async def export_markdown():
-    conn = get_db()
+async def export_markdown(store: DataStore = Depends(get_store)):
+    data = store.export_all()
     lines = ["# NeurOS Data Export", f"Exported: {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC", ""]
-
     lines.append("## Tasks\n")
-    tasks = conn.execute("SELECT * FROM tasks ORDER BY created_at DESC").fetchall()
-    for t in tasks:
-        icon = "✅" if t["status"] == "completed" else "⬜"
-        rec = f" (↻ {t['recurring']})" if t["recurring"] else ""
+    for t in data.get("tasks", []):
+        icon = "✅" if t.get("status") == "completed" else "⬜"
+        rec = f" (↻ {t['recurring']})" if t.get("recurring") else ""
         lines.append(f"- {icon} **{t['title']}**{rec} — {t['spoon_cost']} spoons [{t['energy_tag']}]")
         lines.append("")
-
     lines.append("## Daily Energy\n")
-    states = conn.execute("SELECT * FROM daily_state ORDER BY date DESC").fetchall()
-    for s in states:
+    for s in data.get("daily_state", []):
         lines.append(f"- **{s['date']}** ({s['mode']}): {s['remaining_spoons']}/{s['total_spoons']} spoons, pain {s['pain_level']}/4")
-        if s["notes"]:
-            lines.append(f"  - {s['notes']}")
+        if s.get("notes"): lines.append(f"  - {s['notes']}")
         lines.append("")
-
     lines.append("## Reflections\n")
-    winds = conn.execute("SELECT * FROM wind_down ORDER BY date DESC").fetchall()
-    for w in winds:
+    for w in data.get("wind_down", []):
         lines.append(f"### {w['date']}")
-        if w["went_well"]: lines.append(f"- Went well: {w['went_well']}")
-        if w["drained"]: lines.append(f"- Drained: {w['drained']}")
-        if w["tomorrow_one"]: lines.append(f"- Tomorrow: {w['tomorrow_one']}")
+        if w.get("went_well"): lines.append(f"- Went well: {w['went_well']}")
+        if w.get("drained"): lines.append(f"- Drained: {w['drained']}")
+        if w.get("tomorrow_one"): lines.append(f"- Tomorrow: {w['tomorrow_one']}")
         lines.append("")
-
-    conn.close()
     return PlainTextResponse("\n".join(lines), media_type="text/markdown")
 
 @app.post("/api/export/backup")
 async def backup_db():
     ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     backup_path = BACKUP_DIR / f"neur-os_backup_{ts}.db"
+    import shutil
     shutil.copy2(DB_PATH, backup_path)
-    backups = sorted(BACKUP_DIR.glob("neur-os_backup_*.db"), reverse=True)
-    for old in backups[30:]:
+    for old in sorted(BACKUP_DIR.glob("neur-os_backup_*.db"), reverse=True)[30:]:
         old.unlink()
-    return {"backup": str(backup_path), "path": str(backup_path)}
+    return ok({"backup": str(backup_path)})
 
-# ── Onboarding Chat ─────────────────────────────────────────────
+# ── Onboarding Chat ──
 @app.post("/api/onboarding/chat")
-async def onboarding_chat(data: OnboardingChat):
-    # ponytail: hardcoded questions — deterministic, instant, no LLM dependency
+async def onboarding_chat(data: OnboardingChat, store: DataStore = Depends(get_store)):
     questions = [
         "What kind of tasks do you need the most help keeping track of?",
         "What time of day do you usually have the most energy?",
         "When you're overwhelmed, what helps you recharge?",
         "What's one thing you'd like to be able to do more consistently?",
     ]
-    if data.turn >= len(questions):
-        result = "done"
-    else:
-        result = questions[data.turn]
-    # Save onboarding state
-    conn = get_db()
-    existing = conn.execute("SELECT extracted_profile FROM onboarding_state WHERE id='current'").fetchone()
-    profile = {}
-    if existing:
-        try: profile = json.loads(existing["extracted_profile"])
-        except: pass
+    result = "done" if data.turn >= len(questions) else questions[data.turn]
+    existing = store.get_onboarding()
+    profile = json.loads(existing["extracted_profile"]) if existing and existing.get("extracted_profile") else {}
     if data.history:
         profile[f"turn_{data.turn}"] = data.history[-1]["content"] if data.history else ""
-    conn.execute(
-        "INSERT OR REPLACE INTO onboarding_state (id, phase, turns, extracted_profile, updated_at) "
-        "VALUES ('current', ?, ?, ?, datetime('now'))",
-        (min(data.turn + 1, 5), data.turn + 1, json.dumps(profile)),
-    )
-    conn.commit()
-    return {"response": result, "turn": data.turn + 1, "done": data.turn >= len(questions) - 1}
+    store.save_onboarding(min(data.turn + 1, 5), data.turn + 1, profile)
+    return ok({"response": result, "turn": data.turn + 1, "done": data.turn >= len(questions) - 1})
 
-# ── Passive Log ──────────────────────────────────────────────────
+# ── Passive Log ──
 @app.get("/api/passive-log/today")
-async def get_today_logs():
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT id, timestamp, response, spoons_at_time, current_task_id, source "
-        "FROM passive_log WHERE date(timestamp) = date('now') ORDER BY timestamp"
-    ).fetchall()
-    return {"entries": [dict(r) for r in rows]}
+async def get_today_logs(store: DataStore = Depends(get_store)):
+    return ok({"entries": store.get_today_passive_log()})
 
 @app.post("/api/passive-log/submit")
-async def submit_passive_log(data: PassiveLogSubmit):
-    conn = get_db()
-    lid = uuid.uuid4().hex
-    conn.execute(
-        "INSERT INTO passive_log (id, response, spoons_at_time, current_task_id, source) VALUES (?, ?, ?, ?, ?)",
-        (lid, data.response, data.spoons_at_time, data.current_task_id, data.source),
-    )
-    conn.commit()
-    return {"saved": True, "id": lid}
+async def submit_passive_log(data: PassiveLogSubmit, store: DataStore = Depends(get_store)):
+    lid = store.submit_passive_log(data.response, data.spoons_at_time, data.current_task_id, data.source)
+    return ok({"saved": True, "id": lid})
 
 @app.get("/api/passive-log/check")
-async def check_passive_prompt():
-    conn = get_db()
-    row = conn.execute(
-        "SELECT timestamp FROM passive_log WHERE date(timestamp) = date('now') ORDER BY timestamp DESC LIMIT 1"
-    ).fetchone()
-    if row is None:
-        return {"should_prompt": True, "last_response_minutes_ago": None}
-    from datetime import datetime
-    last = datetime.fromisoformat(row["timestamp"])
-    mins_ago = (datetime.utcnow() - last).total_seconds() / 60
-    return {"should_prompt": mins_ago >= 60, "last_response_minutes_ago": round(mins_ago)}
+async def check_passive_prompt(store: DataStore = Depends(get_store)):
+    last = store.last_passive_log_today()
+    if last is None:
+        return ok({"should_prompt": True, "last_response_minutes_ago": None})
+    import datetime as dt
+    last_ts = dt.datetime.fromisoformat(last.get("timestamp", ""))
+    mins_ago = (dt.datetime.utcnow() - last_ts).total_seconds() / 60
+    return ok({"should_prompt": mins_ago >= 60, "last_response_minutes_ago": round(mins_ago)})
 
-# ── Crisis Check ─────────────────────────────────────────────────
+# ── Crisis Check ──
 @app.post("/api/crisis/check")
-async def crisis_check(data: CrisisCheck):
+async def crisis_check(data: CrisisCheck, store: DataStore = Depends(get_store)):
     score = data.cognitive_load * 0.5 + data.frustration_markers * 0.3 + data.error_rate * 0.2
     trigger = score >= 0.7
     if trigger:
-        conn = get_db()
-        conn.execute(
-            "INSERT INTO crisis_log (id, crisis_type, triggered_by) VALUES (?, ?, ?)",
-            (uuid.uuid4().hex, "auto_detected", "heuristic"),
-        )
-        conn.commit()
-    return {"trigger": trigger, "confidence": round(score, 2), "threshold": 0.7}
+        store.activate_crisis("auto_detected")
+    return ok({"trigger": trigger, "confidence": round(score, 2), "threshold": 0.7})
 
-# ── Data Import ───────────────────────────────────────────────────
+# ── Data Import ──
 @app.post("/api/import")
-async def import_data(data: dict):
-    """Import previously exported JSON data. Merges into existing DB."""
-    conn = get_db()
+async def import_data(data: dict, store: DataStore = Depends(get_store)):
     imported = {}
     for table in ["daily_state", "tasks", "energy_log", "crisis_log", "timer_sessions", "habits", "wind_down"]:
         rows = data.get(table, [])
-        count = 0
-        for row in rows:
-            cols = ", ".join(row.keys())
-            placeholders = ", ".join("?" for _ in row)
-            vals = list(row.values())
-            try:
-                conn.execute(f"INSERT OR IGNORE INTO {table} ({cols}) VALUES ({placeholders})", vals)
-                count += 1
-            except Exception:
-                pass
-        imported[table] = count
-    conn.commit()
-    conn.close()
-    return {"status": "ok", "imported": imported}
+        imported[table] = store.import_rows(table, rows) if rows else 0
+    return ok({"imported": imported})
 
-# ── Brain Dump ──────────────────────────────────────────────
-
+# ── Brain Dump ──
 @app.post("/api/brain-dump")
-async def brain_dump(data: BrainDumpRequest):
-    """Accept a raw text brain dump, optionally organize via LLM."""
-    bid = str(uuid.uuid4())
+async def brain_dump(data: BrainDumpRequest, store: DataStore = Depends(get_store)):
     text = data.text
-    # ponytail: optional declarative rewrite before organization
     if data.declarative:
         try:
             dec = await call_llm("Rewrite this to be gentle, declarative, and demand-free. Remove urgency, guilt, imperative mood. Keep the meaning.", data.text, max_tokens=200)
-            import re; dec = re.sub(r'<think>.*?</think>', '', dec, flags=re.DOTALL).strip()
+            dec = re.sub(r'<think>.*?</think>', '', dec, flags=re.DOTALL).strip()
             if dec and len(dec) > 5: text = dec
         except Exception: pass
     structured = {"tasks": [], "notes": []}
     try:
-        system = "Organize this brain dump into tasks and notes. Return JSON: {\"tasks\": [{\"title\": str, \"spoon_cost\": 0.5-5.0, \"energy_tag\": \"low\"|\"medium\"|\"high\"}], \"notes\": [{\"content\": str}]}"
-        resp = await call_llm(system, data.text, max_tokens=500)
-        import re
+        resp = await call_llm(
+            'Organize this brain dump into tasks and notes. Return JSON: {"tasks": [{"title": str, "spoon_cost": 0.5-5.0, "energy_tag": "low"|"medium"|"high"}], "notes": [{"content": str}]}',
+            data.text, max_tokens=500)
         cleaned = re.sub(r'<think>.*?</think>', '', resp, flags=re.DOTALL).strip()
-        if cleaned.startswith("{"):
-            structured = json.loads(cleaned)
-        elif cleaned.startswith("```"):
-            structured = json.loads(cleaned.strip("`").removeprefix("json").strip())
-    except Exception:
-        pass
-    # ponytail: if LLM returned nothing useful, wrap raw text as a task
-    if not structured["tasks"] and not structured["notes"]:
+        if cleaned.startswith("{"): structured = json.loads(cleaned)
+        elif cleaned.startswith("```"): structured = json.loads(cleaned.strip("`").removeprefix("json").strip())
+    except Exception: pass
+    if not structured.get("tasks") and not structured.get("notes"):
         structured = {"tasks": [{"title": text, "spoon_cost": 1.0, "energy_tag": "medium"}], "notes": []}
-    conn = get_db()
-    conn.execute(
-        "INSERT INTO brain_dumps (id, raw_text, structured_json, source) VALUES (?, ?, ?, ?)",
-        (bid, text, json.dumps(structured), data.source),
-    )
-    conn.commit()
-    conn.close()
-    return {"id": bid, "structured": structured, "original": data.text, "declarative_note": text if data.declarative else None}
+    if structured.get("tasks"):
+        for t in structured["tasks"]:
+            store.create_task({"title": t.get("title", text), "description": "",
+                               "spoon_cost": t.get("spoon_cost", 1.0), "micro_chunks": [],
+                               "energy_tag": t.get("energy_tag", "medium"), "recurring": ""})
+    bid = store.save_brain_dump(text, structured, data.source)
+    return ok({"id": bid, "structured": structured, "original": data.text,
+               "declarative_note": text if data.declarative else None})
 
 @app.get("/api/brain-dump")
-async def get_brain_dumps():
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT * FROM brain_dumps WHERE created_at >= datetime('now', '-30 days') ORDER BY created_at DESC LIMIT 20"
-    ).fetchall()
-    conn.close()
-    return {"dumps": [dict(r) for r in rows]}
+async def get_brain_dumps(store: DataStore = Depends(get_store)):
+    return ok({"dumps": store.list_brain_dumps()})
 
-# ponytail: LIKE-based brain dump search. Full-text > vectors for personal task recall.
 @app.get("/api/brain-dump/search")
-async def search_brain_dumps(q: str = ""):
-    conn = get_db()
-    if not q:
-        return search_brain_dumps()
-    rows = conn.execute(
-        "SELECT * FROM brain_dumps WHERE raw_text LIKE ? OR structured_json LIKE ? ORDER BY created_at DESC LIMIT 10",
-        (f"%{q}%", f"%{q}%"),
-    ).fetchall()
-    conn.close()
-    return {"dumps": [dict(r) for r in rows], "query": q}
+async def search_brain_dumps(q: str = "", store: DataStore = Depends(get_store)):
+    if not q: return ok({"dumps": [], "query": q})
+    return ok({"dumps": store.search_brain_dumps(q), "query": q})
 
-# ── Pacing ────────────────────────────────────────────────
-
+# ── Pacing ──
 @app.get("/api/pacing/envelope")
-async def pacing_envelope():
-    conn = get_db()
-    state = conn.execute("SELECT * FROM daily_state WHERE id = (SELECT MAX(id) FROM daily_state)").fetchone()
-    tasks = conn.execute("SELECT COUNT(*) as cnt FROM tasks WHERE status != 'done'").fetchone()
-    energy_log = conn.execute("SELECT spoons_remaining FROM energy_log ORDER BY timestamp DESC LIMIT 7").fetchall()
-    conn.close()
-    current = state["remaining_spoons"] / max(state["total_spoons"], 1) * 100 if state else 50
-    history = [e["spoons_remaining"] * 10 for e in energy_log]
-    return energy_envelope(current, tasks["cnt"] if tasks else 0, history)
+async def pacing_envelope(store: DataStore = Depends(get_store)):
+    state = store.get_state()
+    tasks = store.get_tasks("active")
+    recent = store.recent_energy(7)
+    current = state["remaining_spoons"] / max(state["total_spoons"], 1) * 100
+    history = [e["spoons_remaining"] * 10 for e in recent]
+    return ok(energy_envelope(current, len(tasks), history))
 
 @app.get("/api/pacing/boom-bust")
-async def boom_bust():
-    conn = get_db()
-    energy_log = conn.execute("SELECT spoons_remaining FROM energy_log ORDER BY timestamp DESC LIMIT 7").fetchall()
-    conn.close()
-    history = [e["spoons_remaining"] * 10 for e in energy_log]
-    return detect_boom_bust(history)
+async def boom_bust(store: DataStore = Depends(get_store)):
+    recent = store.recent_energy(7)
+    history = [e["spoons_remaining"] * 10 for e in recent]
+    return ok(detect_boom_bust(history))
 
-# ponytail: SQL GROUP BY patterns — no ML needed for energy trends.
 @app.get("/api/pacing/patterns")
-async def energy_patterns():
-    conn = get_db()
-    by_hour = conn.execute("""
-        SELECT CAST(strftime('%H', timestamp) AS INTEGER) as hour,
-               AVG(spoons_remaining) as avg_energy,
-               COUNT(*) as days
-        FROM energy_log GROUP BY hour ORDER BY hour
-    """).fetchall()
-    by_dow = conn.execute("""
-        SELECT CAST(strftime('%w', timestamp) AS INTEGER) as dow,
-               AVG(spoons_remaining) as avg_energy
-        FROM energy_log GROUP BY dow ORDER BY dow
-    """).fetchall()
-    conn.close()
-    days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
-    best_hour = max(by_hour, key=lambda r: r['avg_energy'])['hour'] if by_hour else 12
-    worst_hour = min(by_hour, key=lambda r: r['avg_energy'])['hour'] if by_hour else 3
-    best_dow = days[max(by_dow, key=lambda r: r['avg_energy'])['dow']] if by_dow else 'Unknown'
-    return {
-        "by_hour": [dict(r) for r in by_hour],
-        "by_day": [{"day": days[r['dow']], "avg_energy": r['avg_energy']} for r in by_dow],
-        "insight": f"Peak energy: {best_hour}:00. Low point: {worst_hour}:00. Best day: {best_dow}.",
-    }
+async def energy_patterns(store: DataStore = Depends(get_store)):
+    return ok(store.energy_patterns())
 
-# ── Dopamine Menu ─────────────────────────────────────────
-
+# ── Dopamine Menu ──
 @app.get("/api/dopamine-menu")
-async def get_dopamine_menu():
-    conn = get_db()
-    items = conn.execute("SELECT * FROM dopamine_menu_items ORDER BY sort_order").fetchall()
-    conn.close()
-    menu = {"starters": [], "sides": [], "mains": [], "desserts": []}
-    for item in items:
-        d = dict(item)
-        cat = d.pop("category")
-        if cat in menu:
-            menu[cat].append(d)
-    return menu
+async def get_dopamine_menu(store: DataStore = Depends(get_store)):
+    return store.get_dopamine_menu()
 
 @app.post("/api/dopamine-menu")
-async def add_dopamine_item(data: dict):
-    conn = get_db()
-    conn.execute(
-        "INSERT INTO dopamine_menu_items (id, name, category, energy_required, sort_order) VALUES (?, ?, ?, ?, ?)",
-        (str(uuid.uuid4()), data["name"], data["category"], data.get("energy_required", 0.5), data.get("sort_order", 99)),
-    )
-    conn.commit()
-    conn.close()
-    return {"status": "ok"}
+async def add_dopamine_item(data: dict, store: DataStore = Depends(get_store)):
+    store.add_dopamine_item(data)
+    return ok({"status": "ok"})
 
 @app.delete("/api/dopamine-menu/{item_id}")
-async def delete_dopamine_item(item_id: str):
-    conn = get_db()
-    conn.execute("DELETE FROM dopamine_menu_items WHERE id = ?", (item_id,))
-    conn.commit()
-    conn.close()
-    return {"status": "ok"}
+async def delete_dopamine_item(item_id: str, store: DataStore = Depends(get_store)):
+    store.delete_dopamine_item(item_id)
+    return ok({"status": "ok"})
 
-# ── Interoception ─────────────────────────────────────────
-
+# ── Interoception ──
 @app.post("/api/interoception")
-async def log_interoception(data: dict):
-    conn = get_db()
-    conn.execute(
-        "INSERT INTO interoception_log (id, signals, mood, note) VALUES (?, ?, ?, ?)",
-        (str(uuid.uuid4()), json.dumps(data.get("signals", [])), data.get("mood", ""), data.get("note", "")),
-    )
-    conn.commit()
-    conn.close()
-    return {"status": "ok"}
+async def log_interoception(data: dict, store: DataStore = Depends(get_store)):
+    store.log_interoception(data.get("signals", []), data.get("mood", ""), data.get("note", ""))
+    return ok({"status": "ok"})
 
 @app.get("/api/interoception")
-async def get_interoception():
-    conn = get_db()
-    rows = conn.execute("SELECT * FROM interoception_log ORDER BY created_at DESC LIMIT 20").fetchall()
-    conn.close()
-    return {"logs": [dict(r) for r in rows]}
+async def get_interoception(store: DataStore = Depends(get_store)):
+    return ok({"logs": store.get_interoception()})
 
-# ── Templates (Phase 5 ponytail) ───────────────────────────
-
+# ── Templates ──
 @app.get("/api/templates")
-async def get_templates(type: str = "dopamine_menu"):
-    """Export shareable templates: dopamine_menu, pacing_config, or habits."""
-    conn = get_db()
-    if type == "dopamine_menu":
-        rows = conn.execute("SELECT name, category, energy_required FROM dopamine_menu_items ORDER BY sort_order").fetchall()
-        conn.close()
-        return {"type": type, "items": [dict(r) for r in rows]}
-    elif type == "pacing_config":
-        soundscapes = conn.execute("SELECT mode, sound_file, volume FROM soundscape_config ORDER BY mode").fetchall()
-        conn.close()
-        return {"type": type, "soundscapes": [dict(r) for r in soundscapes]}
-    else:
-        conn.close()
-        return {"type": type, "error": "Unknown template type"}
+async def get_templates(type: str = "dopamine_menu", store: DataStore = Depends(get_store)):
+    return store.get_template(type)
 
 @app.post("/api/templates")
-async def import_template(data: dict):
-    """Import a template. Expects {type, items[]} from GET /api/templates."""
-    conn = get_db()
-    count = 0
-    if data.get("type") == "dopamine_menu":
-        for item in data.get("items", []):
-            conn.execute(
-                "INSERT OR IGNORE INTO dopamine_menu_items (id, name, category, energy_required) VALUES (?, ?, ?, ?)",
-                (str(uuid.uuid4()), item["name"], item["category"], item.get("energy_required", 0.5)),
-            )
-            count += 1
-    conn.commit()
-    conn.close()
-    return {"status": "ok", "imported": count}
+async def import_template(data: dict, store: DataStore = Depends(get_store)):
+    count = store.import_template_items(data.get("type", ""), data.get("items", []))
+    return ok({"imported": count})
 
-# ── E2EE Sync Relay (Phase 5) ─────────────────────────
-
+# ── E2EE Sync Relay ──
 @app.post("/api/sync/upload")
-async def sync_upload(data: dict):
-    """Store encrypted blob. Server never sees plaintext — stores opaque base64."""
-    conn = get_db()
-    conn.execute(
-        "INSERT INTO sync_data (id, device_id, collection, encrypted_blob, blob_version) VALUES (?, ?, ?, ?, ?)",
-        (str(uuid.uuid4()), data["device_id"], data.get("collection", "tasks"), data["encrypted_blob"], data.get("version", 1)),
-    )
-    conn.commit()
-    conn.close()
-    return {"status": "ok"}
+async def sync_upload(data: dict, store: DataStore = Depends(get_store)):
+    store.sync_upload(data["device_id"], data.get("collection", "tasks"), data["encrypted_blob"], data.get("version", 1))
+    return ok({"status": "ok"})
 
 @app.get("/api/sync/download")
-async def sync_download(device_id: str = "", collection: str = "tasks", since: str = ""):
-    """Download encrypted blobs since timestamp."""
-    conn = get_db()
-    if since:
-        rows = conn.execute(
-            "SELECT * FROM sync_data WHERE device_id = ? AND collection = ? AND created_at > ? ORDER BY created_at",
-            (device_id, collection, since),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM sync_data WHERE device_id = ? AND collection = ? ORDER BY created_at DESC LIMIT 100",
-            (device_id, collection),
-        ).fetchall()
-    conn.close()
-    return {"blobs": [dict(r) for r in rows]}
+async def sync_download(device_id: str = "", collection: str = "tasks", since: str = "", store: DataStore = Depends(get_store)):
+    return ok({"blobs": store.sync_download(device_id, collection, since)})
 
-# ── Admin Night Mode (Phase 5) ─────────────────────────
-# ponytail: in-memory room state + WebSocket presence. Shared timer broadcast.
-# Server-side state is ephemeral — no persistence needed for rooms.
-
-from fastapi import WebSocket, WebSocketDisconnect
-
+# ── Admin Night Mode ──
 admin_rooms: dict[str, dict] = {}
 
 @app.post("/api/admin-night/rooms")
-async def create_admin_room(data: dict = {}):
+async def create_admin_room():
     room_id = str(uuid.uuid4())[:8]
     admin_rooms[room_id] = {"connections": [], "timer_running": False, "timer_elapsed": 0, "created_at": datetime.utcnow().isoformat()}
-    return {"room_id": room_id}
+    return ok({"room_id": room_id})
 
 @app.get("/api/admin-night/rooms")
 async def list_admin_rooms():
-    return {"rooms": [{"room_id": k, "user_count": len(v["connections"]), "timer_running": v["timer_running"]} for k, v in admin_rooms.items()]}
+    return ok({"rooms": [{"room_id": k, "user_count": len(v["connections"]), "timer_running": v["timer_running"]} for k, v in admin_rooms.items()]})
 
 @app.websocket("/api/admin-night/ws/{room_id}")
 async def admin_night_ws(websocket: WebSocket, room_id: str):
@@ -1272,7 +563,6 @@ async def admin_night_ws(websocket: WebSocket, room_id: str):
     room = admin_rooms[room_id]
     room["connections"].append(websocket)
     try:
-        # Broadcast presence
         presence = {"type": "presence", "count": len([c for c in room["connections"] if c.client_state.name == "CONNECTED"])}
         for c in room["connections"]:
             try: await c.send_json(presence)
@@ -1293,29 +583,22 @@ async def admin_night_ws(websocket: WebSocket, room_id: str):
         if websocket in room["connections"]:
             room["connections"].remove(websocket)
 
-# ── Serve Frontend ────────────────────────────────────────────────
+# ── Serve Frontend ──
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_index():
     index = FRONTEND_DIR / "index.html"
-    if index.exists():
-        return HTMLResponse(index.read_text())
-    return HTMLResponse("<h1>NeurOS</h1><p>Frontend not built yet.</p>")
+    return HTMLResponse(index.read_text()) if index.exists() else HTMLResponse("<h1>NeurOS</h1><p>Frontend not built yet.</p>")
 
 @app.get("/{path:path}")
 async def serve_static(path: str):
-    # Check soundscapes (URL /soundscapes/foo.wav → backend/soundscapes/foo.wav)
     if path.startswith("soundscapes/"):
         sound_file = SOUNDSCAPES_DIR / path[len("soundscapes/"):]
         if sound_file.exists() and sound_file.is_file():
             return FileResponse(str(sound_file))
-    # Then frontend
     file = FRONTEND_DIR / path
     if file.exists() and file.is_file():
         return FileResponse(str(file))
-    # SPA fallback
     index = FRONTEND_DIR / "index.html"
-    if index.exists():
-        return HTMLResponse(index.read_text())
-    raise HTTPException(404)
+    return HTMLResponse(index.read_text()) if index.exists() else HTTPException(404)
