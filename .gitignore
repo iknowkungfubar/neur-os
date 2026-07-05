@@ -2,6 +2,9 @@
 __pycache__/
 .env
 *.db
+*.db-shm
+*.db-wal
+.roam/
 backend/data/
 .hermes/
 AGENT.md

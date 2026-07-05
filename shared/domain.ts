@@ -1,5 +1,6 @@
 // ponytail: shared TypeScript domain types. Mirror of Python backend/domain/entities.py.
 // Used by both mobile (React Native) and web.
+// Validated by backend/test_domain_sync.py — keep exports in sync.
 
 export class EnergyBattery {
   percentage: number;

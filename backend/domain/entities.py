@@ -1,6 +1,7 @@
 # ponytail: pure domain entities. Zero framework imports — no fastapi, sqlite3, httpx.
 # These are plain Python classes and functions that can be tested without infrastructure.
-
+# See also shared/domain.ts for the TypeScript mirror (validated by test_domain_sync.py).
+#
 class EnergyBattery:
     """0-100% battery model. Has drain rate, charge efficiency, background drain."""
     def __init__(self, percentage: float = 50, drain_rate: float = 0.5, charge_rate: float = 0.3):
