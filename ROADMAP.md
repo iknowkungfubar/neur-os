@@ -48,9 +48,36 @@ cd backend && python3 -m pytest -q
 # → 56 passed
 ```
 
-## Next
+## Future
 
-- **OS home screen widgets** (Android/iOS native — needs store build)
-- **CI/CD via Expo EAS** (needs Expo account)
-- **Local LLM on-device** (MLC-LLM cross-compile for Android)
-- **iOS build** (tested via macOS only)
+Not yet built. Organized by dependency readiness.
+
+### Ready Now (no infra required)
+
+| # | Feature | Effort | Notes |
+|---|---------|--------|-------|
+| A | **Passive hourly logger** — periodic "what are you doing?" prompts, auto-logs with spoon context | ~30 min | |
+| B | **Auto crisis detection** — track form errors, timer aborts, erratic nav, auto-trigger crisis | ~2 hr | |
+| C | **Narrative onboarding** — conversational setup over days, strengths-based profiling | ~3 hr | LLM already wired |
+| D | **OS home screen widgets** (Android/iOS) | varies | needs native build pipeline |
+| E | **CI/CD via Expo EAS** | ~1 hr | needs Expo account |
+| F | **iOS build** | varies | needs macOS |
+
+### Could Use the Encrypted Local Storage We Now Have
+
+| # | Feature | Effort | Notes |
+|---|---------|--------|-------|
+| G | **XChaCha20-Poly1305 encryption** as an alternative cipher layer | ~2 hr | SQLCipher is in already; this would be an option |
+| H | **LanceDB vector store for semantic search** | ~4 hr | LIKE-search covers current scale |
+
+### Hardware-Gated / Downstream
+
+| # | Feature | Depends On | Effort | Notes |
+|---|---------|-----------|--------|-------|
+| I | **Bio-sensor / HRV pipeline** (NeuroKit2 → stress-aware pacing) | Wearable hardware | ~2 wk | |
+| J | **OS-level transparent overlay** (Tauri float window) | Tauri v2 API | ~1 wk | |
+| K | **Dynamic quantization scaling** (auto-downshift model at low battery) | Battery monitoring | ~1 wk | |
+| L | **LoRA fine-tuning on user data** | Curated dataset, GPU hours | ~2 wk | |
+| M | **P2P encrypted sync** (multi-device without relay) | CRDT library | ~2 wk | E2EE relay exists; P2P is the trustless variant |
+| N | **Micro-moment RLHF** from dismiss/closing patterns | Passive logger (A) data | ~1 wk | |
+| O | **Strengths-based profiling** (UDL asset identification) | Narrative onboarding (C) | ~4 hr | |
