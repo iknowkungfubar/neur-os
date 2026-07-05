@@ -1192,6 +1192,40 @@ async def get_interoception():
     conn.close()
     return {"logs": [dict(r) for r in rows]}
 
+# ── Templates (Phase 5 ponytail) ───────────────────────────
+
+@app.get("/api/templates")
+async def get_templates(type: str = "dopamine_menu"):
+    """Export shareable templates: dopamine_menu, pacing_config, or habits."""
+    conn = get_db()
+    if type == "dopamine_menu":
+        rows = conn.execute("SELECT name, category, energy_required FROM dopamine_menu_items ORDER BY sort_order").fetchall()
+        conn.close()
+        return {"type": type, "items": [dict(r) for r in rows]}
+    elif type == "pacing_config":
+        soundscapes = conn.execute("SELECT mode, sound_file, volume FROM soundscape_config ORDER BY mode").fetchall()
+        conn.close()
+        return {"type": type, "soundscapes": [dict(r) for r in soundscapes]}
+    else:
+        conn.close()
+        return {"type": type, "error": "Unknown template type"}
+
+@app.post("/api/templates")
+async def import_template(data: dict):
+    """Import a template. Expects {type, items[]} from GET /api/templates."""
+    conn = get_db()
+    count = 0
+    if data.get("type") == "dopamine_menu":
+        for item in data.get("items", []):
+            conn.execute(
+                "INSERT OR IGNORE INTO dopamine_menu_items (id, name, category, energy_required) VALUES (?, ?, ?, ?)",
+                (str(uuid.uuid4()), item["name"], item["category"], item.get("energy_required", 0.5)),
+            )
+            count += 1
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "imported": count}
+
 # ── Serve Frontend ────────────────────────────────────────────────
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 
