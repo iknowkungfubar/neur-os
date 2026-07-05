@@ -160,6 +160,25 @@ def init_db():
             note TEXT DEFAULT '',
             created_at TEXT DEFAULT (datetime('now'))
         );
+        -- Phase 5: E2EE sync relay (server stores opaque encrypted blobs)
+        CREATE TABLE IF NOT EXISTS sync_data (
+            id TEXT PRIMARY KEY,
+            device_id TEXT NOT NULL,
+            collection TEXT NOT NULL,
+            encrypted_blob TEXT NOT NULL,
+            blob_version INTEGER DEFAULT 1,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_sync_device ON sync_data(device_id, collection);
+        -- Phase 5: Admin night rooms
+        CREATE TABLE IF NOT EXISTS admin_room_state (
+            room_id TEXT PRIMARY KEY,
+            timer_running INTEGER DEFAULT 0,
+            timer_elapsed INTEGER DEFAULT 0,
+            timer_started_at TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        );
     """)
     # Seed default soundscape configs
     default_sounds = [
@@ -198,38 +217,8 @@ def init_db():
 init_db()
 
 # ── Domain Services ─────────────────────────────────
-def energy_envelope(current_pct: float, tasks_today: int, history: list[float]) -> dict:
-    """Calculate safe energy envelope. Returns {recommended_max, recommended_min, current_usage, status}."""
-    avg_daily_drain = 0.3  # default: each task drains ~30% energy (approximate)
-    if history and len(history) >= 3:
-        avg_daily_drain = sum(history[i] - history[i+1] for i in range(len(history)-1) if history[i] > history[i+1]) / max(len(history)-1, 1)
-    current_usage = tasks_today * avg_daily_drain
-    recommended_max = current_pct * 0.8  # never use more than 80% of available
-    recommended_min = current_pct * 0.15  # always save at least 15%
-    status = "ok"
-    if tasks_today > 0 and current_usage > recommended_max:
-        status = "over"
-    elif current_pct <= 20:
-        status = "low"
-    return {"recommended_max": round(recommended_max, 1), "recommended_min": round(recommended_min, 1), "current_usage": round(current_usage, 1), "status": status}
-
-def detect_boom_bust(history: list[float]) -> dict:
-    """Detect boom-bust patterns in energy history."""
-    if len(history) < 5:
-        return {"pattern": "stable", "confidence": 0.0, "message": "Not enough data yet"}
-    # Check for boom (3+ high days) followed by bust (2+ low days)
-    high_threshold = 60  # above this is "high energy"
-    low_threshold = 30   # below this is "bust"
-    recent = history[-5:]
-    high_days = sum(1 for h in recent[:3] if h >= high_threshold)
-    low_days = sum(1 for h in recent[3:] if h < low_threshold)
-    if high_days >= 2 and low_days >= 2:
-        confidence = min((high_days + low_days) / 5.0, 1.0)
-        return {"pattern": "boom-bust", "confidence": round(confidence, 2), "message": "You've been pushing hard. Tomorrow might feel rough. Want to schedule rest?"}
-    # Check declining pattern
-    if len(recent) >= 3 and all(recent[i] < recent[i-1] for i in range(1, len(recent))):
-        return {"pattern": "declining", "confidence": 0.6, "message": "Your energy has been decreasing. A rest day might help."}
-    return {"pattern": "stable", "confidence": 0.5, "message": "Energy pattern looks consistent."}
+from backend.domain.entities import EnergyBattery, Task, BrainDump
+from backend.domain.usecases import energy_envelope, detect_boom_bust, parse_llm_json, analyze_energy_patterns
 
 # ── Models ────────────────────────────────────────────────────────
 class SpoonCheckIn(BaseModel):
@@ -1225,6 +1214,84 @@ async def import_template(data: dict):
     conn.commit()
     conn.close()
     return {"status": "ok", "imported": count}
+
+# ── E2EE Sync Relay (Phase 5) ─────────────────────────
+
+@app.post("/api/sync/upload")
+async def sync_upload(data: dict):
+    """Store encrypted blob. Server never sees plaintext — stores opaque base64."""
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO sync_data (id, device_id, collection, encrypted_blob, blob_version) VALUES (?, ?, ?, ?, ?)",
+        (str(uuid.uuid4()), data["device_id"], data.get("collection", "tasks"), data["encrypted_blob"], data.get("version", 1)),
+    )
+    conn.commit()
+    conn.close()
+    return {"status": "ok"}
+
+@app.get("/api/sync/download")
+async def sync_download(device_id: str = "", collection: str = "tasks", since: str = ""):
+    """Download encrypted blobs since timestamp."""
+    conn = get_db()
+    if since:
+        rows = conn.execute(
+            "SELECT * FROM sync_data WHERE device_id = ? AND collection = ? AND created_at > ? ORDER BY created_at",
+            (device_id, collection, since),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM sync_data WHERE device_id = ? AND collection = ? ORDER BY created_at DESC LIMIT 100",
+            (device_id, collection),
+        ).fetchall()
+    conn.close()
+    return {"blobs": [dict(r) for r in rows]}
+
+# ── Admin Night Mode (Phase 5) ─────────────────────────
+# ponytail: in-memory room state + WebSocket presence. Shared timer broadcast.
+# Server-side state is ephemeral — no persistence needed for rooms.
+
+from fastapi import WebSocket, WebSocketDisconnect
+
+admin_rooms: dict[str, dict] = {}
+
+@app.post("/api/admin-night/rooms")
+async def create_admin_room(data: dict = {}):
+    room_id = str(uuid.uuid4())[:8]
+    admin_rooms[room_id] = {"connections": [], "timer_running": False, "timer_elapsed": 0, "created_at": datetime.utcnow().isoformat()}
+    return {"room_id": room_id}
+
+@app.get("/api/admin-night/rooms")
+async def list_admin_rooms():
+    return {"rooms": [{"room_id": k, "user_count": len(v["connections"]), "timer_running": v["timer_running"]} for k, v in admin_rooms.items()]}
+
+@app.websocket("/api/admin-night/ws/{room_id}")
+async def admin_night_ws(websocket: WebSocket, room_id: str):
+    await websocket.accept()
+    if room_id not in admin_rooms:
+        admin_rooms[room_id] = {"connections": [], "timer_running": False, "timer_elapsed": 0, "created_at": datetime.utcnow().isoformat()}
+    room = admin_rooms[room_id]
+    room["connections"].append(websocket)
+    try:
+        # Broadcast presence
+        presence = {"type": "presence", "count": len([c for c in room["connections"] if c.client_state.name == "CONNECTED"])}
+        for c in room["connections"]:
+            try: await c.send_json(presence)
+            except: pass
+        while True:
+            msg = await websocket.receive_json()
+            if msg.get("type") == "timer_sync":
+                room["timer_running"] = msg.get("running", room["timer_running"])
+                room["timer_elapsed"] = msg.get("elapsed", room["timer_elapsed"])
+                for c in room["connections"]:
+                    try: await c.send_json({"type": "timer_sync", "running": room["timer_running"], "elapsed": room["timer_elapsed"]})
+                    except: pass
+            elif msg.get("type") == "ping":
+                await websocket.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        pass
+    finally:
+        if websocket in room["connections"]:
+            room["connections"].remove(websocket)
 
 # ── Serve Frontend ────────────────────────────────────────────────
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"

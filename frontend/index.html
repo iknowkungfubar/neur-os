@@ -225,9 +225,9 @@
 <!-- Mode Bar -->
   <div class="mode-bar" id="mode-bar">
     <div class="flex">
-      <span class="mode-dot green active" data-mode="green" onclick="setMode('green')"></span>
-      <span class="mode-dot amber" data-mode="amber" onclick="setMode('amber')"></span>
-      <span class="mode-dot red" data-mode="red" onclick="setMode('red')"></span>
+      <span class="mode-dot green active" data-mode="green" onclick="setMode('green')" aria-label="Green traffic light — ready" role="button" tabindex="0" onkeydown="if(event.key==='Enter')setMode('green')"></span>
+      <span class="mode-dot amber" data-mode="amber" onclick="setMode('amber')" aria-label="Amber traffic light — caution" role="button" tabindex="0" onkeydown="if(event.key==='Enter')setMode('amber')"></span>
+      <span class="mode-dot red" data-mode="red" onclick="setMode('red')" aria-label="Red traffic light — rest" role="button" tabindex="0" onkeydown="if(event.key==='Enter')setMode('red')"></span>
       <span class="mode-label" id="mode-label">Ready</span>
     </div>
     <div class="flex">
@@ -248,6 +248,13 @@
   <div class="flex gap-8 mt-4">
     <button class="btn btn-sm btn-outline" onclick="showDopamineMenu()" title="Need a boost?">🎮 Boost</button>
     <button class="btn btn-sm btn-outline" onclick="showInteroception()" title="How are you feeling?">🧠 Check in</button>
+  </div>
+
+  <!-- ═══ PACING DASHBOARD ═══ -->
+  <div class="card" id="pacing-card" style="display:none">
+    <div id="pacing-envelope" class="mb-8"></div>
+    <div id="pacing-boom" class="mb-8"></div>
+    <div id="pacing-suggestion" class="text-dim text-sm"></div>
   </div>
 
   <!-- Tab Bar -->
@@ -373,6 +380,11 @@
     <div class="card">
       <h2>This week</h2>
       <div id="review-content"><p class="text-dim text-sm">Loading...</p></div>
+    </div>
+    <div class="card" id="patterns-card" style="display:none">
+      <h2>Energy patterns</h2>
+      <div id="patterns-insight" class="text-dim text-sm mb-8"></div>
+      <div id="patterns-by-hour"></div>
     </div>
   </div>
 </div>
@@ -753,7 +765,35 @@ async function refreshState() {
       const pct = Math.round((s.remaining_spoons / (s.total_spoons || 10)) * 100);
       document.getElementById('energy-battery').textContent = `${pct}% 🔋`;
     }
+    await loadPacingDashboard();
   } catch(e) {}
+}
+
+// ── Pacing Dashboard ──
+
+async function loadPacingDashboard() {
+  const card = document.getElementById('pacing-card');
+  try {
+    const [envelope, boom] = await Promise.all([
+      fetch('/api/pacing/envelope').then(r => r.json()),
+      fetch('/api/pacing/boom-bust').then(r => r.json())
+    ]);
+    const envEl = document.getElementById('pacing-envelope');
+    if (envelope.status === 'over') {
+      envEl.innerHTML = `<span class="text-red">⚠ Over: ${envelope.current_usage}% usage / ${envelope.recommended_max}% max — taking a break might help.</span>`;
+    } else if (envelope.status === 'low') {
+      envEl.innerHTML = `<span class="text-amber">🔋 Low energy (${envelope.current_usage}%). Rest may help.</span>`;
+    } else {
+      envEl.innerHTML = `<span class="text-green">✓ Energy envelope: ${envelope.current_usage}% used of ${envelope.recommended_max}% max</span>`;
+    }
+    const boomEl = document.getElementById('pacing-boom');
+    if (boom.confidence > 0.5) {
+      boomEl.innerHTML = `<span class="text-amber">📊 ${boom.message}</span>`;
+    }
+    document.getElementById('pacing-suggestion').textContent = boom.pattern === 'boom-bust' ? boom.message :
+      envelope.status === 'over' ? `Your energy envelope suggests stopping at ${envelope.recommended_max}% today. You're at ${envelope.current_usage}%.` : '';
+    card.style.display = 'block';
+  } catch(e) { card.style.display = 'none'; }
 }
 
 // ── Full Task List ──
@@ -915,6 +955,15 @@ async function loadReview() {
   } catch(e) {
     container.innerHTML = '<p class="text-dim text-sm">Could not load review.</p>';
   }
+  // Phase 4: energy patterns
+  try {
+    const pr = await fetch(`${API}/api/pacing/patterns`);
+    const pat = await pr.json();
+    if (pat.insight) {
+      document.getElementById('patterns-insight').textContent = pat.insight;
+      document.getElementById('patterns-card').style.display = 'block';
+    }
+  } catch(e) {}
 }
 
 // ── Crisis ──
