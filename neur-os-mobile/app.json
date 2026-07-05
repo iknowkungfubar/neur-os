@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "NeurOS",
+    "slug": "neur-os",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSSpeechRecognitionUsageDescription": "NeurOS uses speech to let you brain dump hands-free.",
+        "NSMicrophoneUsageDescription": "NeurOS uses the microphone for voice brain dump."
+      }
+    },
+    "android": {
+      "package": "com.turintech.neuros",
+      "adaptiveIcon": {
+        "backgroundColor": "#0a0a0f",
+        "foregroundImage": "./assets/adaptive-icon.png"
+      },
+      "permissions": ["RECORD_AUDIO"]
+    }
+  }
+}

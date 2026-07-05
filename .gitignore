@@ -10,3 +10,5 @@ desktop/node_modules/
 desktop/src-tauri/target/
 research/
 *.wav
+neur-os-mobile/node_modules/
+neur-os-mobile/dist/
