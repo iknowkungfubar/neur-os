@@ -1,19 +1,20 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, SafeAreaView, StatusBar, ScrollView, Alert } from 'react-native';
+import { EnergyBattery, energyEnvelope } from '../shared/domain';
+import { cacheState, getCachedState, saveLocal, loadLocal } from '../shared/storage';
 
-// ponytail: configurable API base. Default to localhost, override via env or long-press settings.
 let API = 'http://localhost:7447/api';
 
-// ponytail: single-file 4-tab mobile client. No nav library — state-based tabs are enough for 4 screens.
-// Skip: SQLCipher (backend handles encryption), widgets (nice-to-have), CI/CD (add before store submission)
-// Voice: Web Speech API (works in Expo web + RN via expo-speech)
-
 async function api(path: string, opts?: any) {
-  const res = await fetch(`${API}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...opts,
-  });
-  return res.json();
+  try {
+    const res = await fetch(`${API}${path}`, {
+      headers: { 'Content-Type': 'application/json' },
+      ...opts,
+    });
+    return res.json();
+  } catch {
+    return null;
+  }
 }
 
 export default function App() {
@@ -26,12 +27,11 @@ export default function App() {
   const [listening, setListening] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [apiUrl, setApiUrl] = useState(API);
+  const [battery, setBattery] = useState(new EnergyBattery(50, 0.5, 0.3));
 
-  // ponytail: settings to configure API base URL (point at desktop LM Studio from mobile)
   const saveApiUrl = () => { API = apiUrl.replace(/\/$/, ''); setShowSettings(false); Alert.alert('API', 'URL updated'); };
 
   const startListening = () => {
-    // ponytail: Web Speech API for voice capture. Native: expo-speech.
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) { alert('Voice not supported in this browser'); return; }
     const recognition = new SpeechRecognition();
@@ -48,12 +48,23 @@ export default function App() {
   };
 
   const refresh = useCallback(async () => {
-    try {
-      const s = await api('/state');
+    // Load from cache first for instant display
+    const cached = await getCachedState();
+    if (cached) {
+      setState(cached);
+      setBattery(new EnergyBattery(cached.remaining_spoons / (cached.total_spoons || 10) * 100));
+    }
+    // Then fetch fresh data from server
+    const s = await api('/state');
+    if (s?.state) {
       setState(s.state);
-      const t = await api('/tasks');
-      setTasks(t.tasks || []);
-    } catch {}
+      setBattery(new EnergyBattery(
+        (s.state.remaining_spoons / (s.state.total_spoons || 10)) * 100
+      ));
+      await cacheState(s.state);
+    }
+    const t = await api('/tasks');
+    if (t?.tasks) setTasks(t.tasks);
   }, []);
 
   useEffect(() => { refresh(); const id = setInterval(refresh, 30000); return () => clearInterval(id); }, []);
@@ -61,14 +72,26 @@ export default function App() {
   const doBrainDump = async () => {
     if (!dumpText.trim()) return;
     const d = await api('/brain-dump', { method: 'POST', body: JSON.stringify({ text: dumpText }) });
-    setDumpResult(d);
-    setDumpText('');
-    refresh();
+    if (d) {
+      setDumpResult(d);
+      setDumpText('');
+      refresh();
+    } else {
+      // Offline: save locally and sync later
+      await saveLocal('pending-dump-' + Date.now(), dumpText);
+      setDumpResult({ structured: { tasks: [{ title: dumpText }], notes: [] } });
+      setDumpText('');
+      Alert.alert('Saved offline', 'Will sync when connection returns');
+    }
   };
 
-  const loadMenu = async () => { setMenu(await api('/dopamine-menu')); };
+  const loadMenu = async () => {
+    const m = await api('/dopamine-menu');
+    if (m) setMenu(m);
+  };
 
-  const pct = state ? Math.round((state.remaining_spoons / (state.total_spoons || 10)) * 100) : 0;
+  const pct = battery.percentage;
+  const env = energyEnvelope(pct, tasks.filter((t: any) => t.status !== 'done').length, []);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#0a0a0f' }}>
@@ -101,7 +124,10 @@ export default function App() {
           <ScrollView>
             <Text style={{ fontSize: 24, color: '#fff', marginBottom: 16 }}>How are things today?</Text>
             <Text style={{ fontSize: 40, color: pct > 50 ? '#4ade80' : pct > 20 ? '#fbbf24' : '#f87171', marginBottom: 16 }}>
-              {pct}%
+              {Math.round(pct)}%
+            </Text>
+            <Text style={{ color: '#666', marginBottom: 8 }}>
+              Status: {env.status as string} · Suggested max: {env.recommendedMax as number}
             </Text>
             <TextInput
               style={{ backgroundColor: '#1a1a2a', color: '#fff', padding: 12, borderRadius: 8, fontSize: 16, marginBottom: 8 }}
