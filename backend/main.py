@@ -282,6 +282,7 @@ class SoundscapeUpdate(BaseModel):
 class BrainDumpRequest(BaseModel):
     text: str
     source: str = "textarea"
+    declarative: bool = False  # ponytail: pipe through declarative rewrite before organizing
 
 class LLMRequest(BaseModel):
     prompt: str
@@ -1036,6 +1037,14 @@ async def import_data(data: dict):
 async def brain_dump(data: BrainDumpRequest):
     """Accept a raw text brain dump, optionally organize via LLM."""
     bid = str(uuid.uuid4())
+    text = data.text
+    # ponytail: optional declarative rewrite before organization
+    if data.declarative:
+        try:
+            dec = await call_llm("Rewrite this to be gentle, declarative, and demand-free. Remove urgency, guilt, imperative mood. Keep the meaning.", data.text, max_tokens=200)
+            import re; dec = re.sub(r'<think>.*?</think>', '', dec, flags=re.DOTALL).strip()
+            if dec and len(dec) > 5: text = dec
+        except Exception: pass
     structured = {"tasks": [], "notes": []}
     try:
         system = "Organize this brain dump into tasks and notes. Return JSON: {\"tasks\": [{\"title\": str, \"spoon_cost\": 0.5-5.0, \"energy_tag\": \"low\"|\"medium\"|\"high\"}], \"notes\": [{\"content\": str}]}"
@@ -1050,15 +1059,15 @@ async def brain_dump(data: BrainDumpRequest):
         pass
     # ponytail: if LLM returned nothing useful, wrap raw text as a task
     if not structured["tasks"] and not structured["notes"]:
-        structured = {"tasks": [{"title": data.text, "spoon_cost": 1.0, "energy_tag": "medium"}], "notes": []}
+        structured = {"tasks": [{"title": text, "spoon_cost": 1.0, "energy_tag": "medium"}], "notes": []}
     conn = get_db()
     conn.execute(
         "INSERT INTO brain_dumps (id, raw_text, structured_json, source) VALUES (?, ?, ?, ?)",
-        (bid, data.text, json.dumps(structured), data.source),
+        (bid, text, json.dumps(structured), data.source),
     )
     conn.commit()
     conn.close()
-    return {"id": bid, "structured": structured, "original": data.text}
+    return {"id": bid, "structured": structured, "original": data.text, "declarative_note": text if data.declarative else None}
 
 @app.get("/api/brain-dump")
 async def get_brain_dumps():
@@ -1068,6 +1077,19 @@ async def get_brain_dumps():
     ).fetchall()
     conn.close()
     return {"dumps": [dict(r) for r in rows]}
+
+# ponytail: LIKE-based brain dump search. Full-text > vectors for personal task recall.
+@app.get("/api/brain-dump/search")
+async def search_brain_dumps(q: str = ""):
+    conn = get_db()
+    if not q:
+        return search_brain_dumps()
+    rows = conn.execute(
+        "SELECT * FROM brain_dumps WHERE raw_text LIKE ? OR structured_json LIKE ? ORDER BY created_at DESC LIMIT 10",
+        (f"%{q}%", f"%{q}%"),
+    ).fetchall()
+    conn.close()
+    return {"dumps": [dict(r) for r in rows], "query": q}
 
 # ── Pacing ────────────────────────────────────────────────
 
@@ -1089,6 +1111,32 @@ async def boom_bust():
     conn.close()
     history = [e["spoons_remaining"] * 10 for e in energy_log]
     return detect_boom_bust(history)
+
+# ponytail: SQL GROUP BY patterns — no ML needed for energy trends.
+@app.get("/api/pacing/patterns")
+async def energy_patterns():
+    conn = get_db()
+    by_hour = conn.execute("""
+        SELECT CAST(strftime('%H', timestamp) AS INTEGER) as hour,
+               AVG(spoons_remaining) as avg_energy,
+               COUNT(*) as days
+        FROM energy_log GROUP BY hour ORDER BY hour
+    """).fetchall()
+    by_dow = conn.execute("""
+        SELECT CAST(strftime('%w', timestamp) AS INTEGER) as dow,
+               AVG(spoons_remaining) as avg_energy
+        FROM energy_log GROUP BY dow ORDER BY dow
+    """).fetchall()
+    conn.close()
+    days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
+    best_hour = max(by_hour, key=lambda r: r['avg_energy'])['hour'] if by_hour else 12
+    worst_hour = min(by_hour, key=lambda r: r['avg_energy'])['hour'] if by_hour else 3
+    best_dow = days[max(by_dow, key=lambda r: r['avg_energy'])['dow']] if by_dow else 'Unknown'
+    return {
+        "by_hour": [dict(r) for r in by_hour],
+        "by_day": [{"day": days[r['dow']], "avg_energy": r['avg_energy']} for r in by_dow],
+        "insight": f"Peak energy: {best_hour}:00. Low point: {worst_hour}:00. Best day: {best_dow}.",
+    }
 
 # ── Dopamine Menu ─────────────────────────────────────────
 

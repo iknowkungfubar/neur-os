@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, SafeAreaView, StatusBar, ScrollView } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, FlatList, SafeAreaView, StatusBar, ScrollView, Alert } from 'react-native';
 
-const API = 'http://localhost:7447/api';
+// ponytail: configurable API base. Default to localhost, override via env or long-press settings.
+let API = 'http://localhost:7447/api';
 
 // ponytail: single-file 4-tab mobile client. No nav library — state-based tabs are enough for 4 screens.
 // Skip: SQLCipher (backend handles encryption), widgets (nice-to-have), CI/CD (add before store submission)
@@ -23,6 +24,11 @@ export default function App() {
   const [dumpResult, setDumpResult] = useState<any>(null);
   const [menu, setMenu] = useState<any>(null);
   const [listening, setListening] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [apiUrl, setApiUrl] = useState(API);
+
+  // ponytail: settings to configure API base URL (point at desktop LM Studio from mobile)
+  const saveApiUrl = () => { API = apiUrl.replace(/\/$/, ''); setShowSettings(false); Alert.alert('API', 'URL updated'); };
 
   const startListening = () => {
     // ponytail: Web Speech API for voice capture. Native: expo-speech.
@@ -76,7 +82,19 @@ export default function App() {
               <Text style={{ color: tab === t ? '#fff' : '#888' }}>{t}</Text>
             </TouchableOpacity>
           ))}
+          <TouchableOpacity onPress={() => setShowSettings(!showSettings)} style={{ marginLeft: 'auto', padding: 8 }}>
+            <Text style={{ color: '#666' }}>⚙</Text>
+          </TouchableOpacity>
         </View>
+        {showSettings && (
+          <View style={{ backgroundColor: '#1a1a2a', padding: 12, borderRadius: 8, marginBottom: 16 }}>
+            <TextInput style={{ backgroundColor: '#2a2a3a', color: '#fff', padding: 8, borderRadius: 4, marginBottom: 8 }}
+              value={apiUrl} onChangeText={setApiUrl} placeholder="http://host:7447/api" placeholderTextColor="#666" />
+            <TouchableOpacity onPress={saveApiUrl} style={{ backgroundColor: '#22c55e', padding: 8, borderRadius: 4, alignItems: 'center' }}>
+              <Text style={{ color: '#fff' }}>Save</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Today tab */}
         {tab === 'today' && (
