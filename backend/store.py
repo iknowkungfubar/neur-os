@@ -95,6 +95,10 @@ class DataStore:
 
     # ── Review ──
     def weekly_review(self, week_ago: str, today: str) -> dict: raise NotImplementedError
+    # ── Soundscapes ──
+    def get_soundscape_configs(self) -> list[dict]: raise NotImplementedError
+    def update_soundscape_config(self, mode: str, updates: dict) -> None: raise NotImplementedError
+    def list_sound_files(self) -> list[str]: raise NotImplementedError
     def review_insight(self, week_ago: str) -> dict: raise NotImplementedError
 
     # ── Check-in / Init ──
@@ -808,6 +812,36 @@ class SqliteStore(DataStore):
         c.close()
 
         days_with_data = len(energy_states)
+    # ── Soundscapes (SqliteStore) ──
+
+    def get_soundscape_configs(self) -> list[dict]:
+        c = self._conn()
+        rows = c.execute("SELECT mode, sound_file, volume, loop FROM soundscape_config ORDER BY mode").fetchall()
+        c.close()
+        return [dict(r) for r in rows]
+
+    def update_soundscape_config(self, mode: str, updates: dict) -> None:
+        c = self._conn()
+        if updates:
+            sets, vals = [], []
+            for key, col in [("sound_file", "sound_file"), ("volume", "volume"), ("loop", "loop")]:
+                if key in updates:
+                    sets.append(f"{col} = ?")
+                    v = updates[key]
+                    if key == "volume": v = max(0, min(1, v))
+                    elif key == "loop": v = 1 if v else 0
+                    vals.append(v)
+            if sets:
+                vals.append(mode)
+                c.execute(f"UPDATE soundscape_config SET {', '.join(sets)} WHERE mode = ?", vals)
+                c.connection.commit()
+        c.close()
+
+    def list_sound_files(self) -> list[str]:
+        from backend.config import SOUNDSCAPES_DIR
+        if SOUNDSCAPES_DIR.exists():
+            return sorted([f.name for f in SOUNDSCAPES_DIR.iterdir() if f.suffix in (".wav", ".ogg", ".mp3", ".flac")])
+        return []
         total_tasks = len(completed_tasks)
         total_crises = len(crises)
         high_spoon_tasks = sum(1 for t in completed_tasks if t["energy_tag"] == "high")
@@ -1251,3 +1285,24 @@ class InMemoryStore(DataStore):
                 if themes:
                     lines.append(f"Recurring themes: {'; '.join(themes[:3])}.")
         return {"insight": "\n".join(lines)}
+    # ── Soundscapes (InMemoryStore) ──
+
+    def get_soundscape_configs(self) -> list[dict]:
+        if not hasattr(self, "sound_configs"):
+            self.sound_configs = {}
+        return [
+            {"mode": m, "sound_file": c.get("sound_file", ""),
+             "volume": c.get("volume", 0.5), "loop": c.get("loop", 0)}
+            for m, c in self.sound_configs.items()
+        ]
+
+    def update_soundscape_config(self, mode: str, updates: dict) -> None:
+        if not hasattr(self, "sound_configs"):
+            self.sound_configs = {}
+        if mode not in self.sound_configs:
+            self.sound_configs[mode] = {"sound_file": "", "volume": 0.5, "loop": 0}
+        self.sound_configs[mode].update(updates)
+
+    def list_sound_files(self) -> list[str]:
+        return []
+
