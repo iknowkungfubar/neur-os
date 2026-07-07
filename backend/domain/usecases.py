@@ -1,4 +1,7 @@
-# ponytail: domain use cases. Pure functions, no framework imports.
+# ponytail: pure domain use cases. Pure functions, no framework imports.
+import json
+from datetime import datetime
+
 
 def energy_envelope(current_pct: float, tasks_today: int, history: list[float]) -> dict:
     """Calculate safe energy envelope. See spec 2.1."""
@@ -41,9 +44,9 @@ def parse_llm_json(raw: str) -> dict:
     import re
     cleaned = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
     if cleaned.startswith("{"):
-        return __import__('json').loads(cleaned)
+        return json.loads(cleaned)
     if cleaned.startswith("```"):
-        return __import__('json').loads(cleaned.strip("`").removeprefix("json").strip())
+        return json.loads(cleaned.strip("`").removeprefix("json").strip())
     return {}
 
 
@@ -53,7 +56,7 @@ def analyze_energy_patterns(energy_log_rows: list) -> dict:
     by_dow = {}
     for row in energy_log_rows:
         try:
-            ts = __import__('datetime').datetime.fromisoformat(row["timestamp"])
+            ts = datetime.fromisoformat(row["timestamp"])
             hour = ts.hour
             dow = ts.weekday()
             energy = row["spoons_remaining"]
@@ -61,14 +64,10 @@ def analyze_energy_patterns(energy_log_rows: list) -> dict:
             by_dow.setdefault(dow, []).append(energy)
         except (ValueError, KeyError):
             continue
-    days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-    hour_avg = {h: sum(v)/len(v) for h, v in by_hour.items()}
-    dow_avg = {days[d]: sum(v)/len(v) for d, v in by_dow.items()}
-    best_hour = max(hour_avg, key=hour_avg.get) if hour_avg else 12  # type: ignore
-    worst_hour = min(hour_avg, key=hour_avg.get) if hour_avg else 3  # type: ignore
-    best_dow = max(dow_avg, key=dow_avg.get) if dow_avg else "Unknown"  # type: ignore
-    return {
-        "by_hour": [{"hour": h, "avg_energy": round(hour_avg[h], 1)} for h in sorted(hour_avg)],
-        "by_day": [{"day": d, "avg_energy": round(dow_avg[d], 1)} for d in days if d in dow_avg],
-        "insight": f"Peak energy: {best_hour}:00. Low point: {worst_hour}:00. Best day: {best_dow}.",
-    }
+    averages = {}
+    if by_hour:
+        averages["by_hour"] = {str(h): round(sum(v)/len(v), 1) for h, v in sorted(by_hour.items())}
+    if by_dow:
+        day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        averages["by_day"] = {day_names[int(d)]: round(sum(v)/len(v), 1) for d, v in sorted(by_dow.items())}
+    return averages
