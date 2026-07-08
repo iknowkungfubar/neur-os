@@ -1,18 +1,18 @@
 """Export routes."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
-from datetime import date, datetime
+from fastapi import APIRouter, Depends
+from datetime import datetime
 from backend.store import DataStore
 from backend.deps import get_store
 from backend.response import ok
-from backend.config import DB_PATH, BACKUP_DIR, SOUNDSCAPES_DIR
+from backend.config import DB_PATH, BACKUP_DIR
 
 router = APIRouter()
 
 @router.get("/api/export/markdown")
 async def export_markdown(store: DataStore = Depends(get_store)):
-    data = store.export_all()
+    store.export_all()
 
 @router.get("/api/export/markdown")
 async def export_markdown(store: DataStore = Depends(get_store)):

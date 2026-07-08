@@ -10,7 +10,6 @@ import sqlite3
 import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Optional
 
 
 # ── Abstract Store ────────────────────────────────────────────
@@ -800,18 +799,18 @@ class SqliteStore(DataStore):
         energy_states = c.execute(
             "SELECT * FROM daily_state WHERE date >= ? ORDER BY date", (week_ago,)
         ).fetchall()
-        completed_tasks = c.execute(
+        c.execute(
             "SELECT title, energy_tag, spoon_cost FROM tasks WHERE completed_at IS NOT NULL AND date(completed_at) >= ?", (week_ago,)
         ).fetchall()
-        wind_entries = c.execute(
+        c.execute(
             "SELECT * FROM wind_down WHERE date >= ? ORDER BY date", (week_ago,)
         ).fetchall()
-        crises = c.execute(
+        c.execute(
             "SELECT date(timestamp) as d FROM crisis_log WHERE date(timestamp) >= ? ORDER BY timestamp", (week_ago,)
         ).fetchall()
         c.close()
 
-        days_with_data = len(energy_states)
+        len(energy_states)
     # ── Soundscapes (SqliteStore) ──
 
     def get_soundscape_configs(self) -> list[dict]:

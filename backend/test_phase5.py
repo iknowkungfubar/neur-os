@@ -1,5 +1,7 @@
 """Tests for Phase 5: E2EE sync relay and admin night mode."""
-import sys, os, tempfile, json, uuid
+import sys
+import os
+import tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 tmp = tempfile.mkdtemp()

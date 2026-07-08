@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from datetime import date, datetime
+from datetime import datetime
 from backend.store import DataStore
 from backend.deps import get_store
 from backend.response import ok
 from backend.schemas import TimerAction
-from backend.timer import TimerSession
 
 router = APIRouter()
 

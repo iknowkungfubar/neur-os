@@ -2,15 +2,15 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from datetime import date, datetime
+from datetime import date
 from backend.store import DataStore
 from backend.deps import get_store
 from backend.response import ok
 from backend.schemas import TaskCreate, TaskUpdate
-from backend.domain.usecases import parse_llm_json
 from backend.config import ENERGY_TAGS
 from backend.llm import call_llm
-import json, re
+import json
+import re
 
 router = APIRouter()
 
