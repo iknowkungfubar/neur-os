@@ -1,12 +1,12 @@
 """Test that domain/ has zero framework imports. Ponytail: smallest test that satisfies AC 1.5."""
-import sys, importlib
+import sys
 # Clear cached modules to force fresh import
 for mod in list(sys.modules.keys()):
     if 'backend.domain' in mod:
         del sys.modules[mod]
 
 # import domain entities — no fastapi, no sqlite3
-from backend.domain.entities import EnergyBattery, Task, BrainDump
+from backend.domain.entities import EnergyBattery, BrainDump
 from backend.domain.usecases import energy_envelope, detect_boom_bust
 
 def test_no_framework_imports():

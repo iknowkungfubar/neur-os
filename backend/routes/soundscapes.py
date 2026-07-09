@@ -1,7 +1,7 @@
 """Soundscape routes. Uses store for persistence."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from backend.deps import get_store
 from backend.config import SOUNDSCAPES_DIR
 from backend.schemas import SoundscapeUpdate

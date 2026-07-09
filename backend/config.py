@@ -5,7 +5,6 @@ without circular imports.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 DATA_DIR = Path(__file__).parent / "data"

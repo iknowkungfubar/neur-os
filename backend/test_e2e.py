@@ -1,5 +1,4 @@
 """E2E test suite for NeurOS backend — tests the full API flow."""
-import json
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

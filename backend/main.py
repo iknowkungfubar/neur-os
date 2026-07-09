@@ -8,14 +8,12 @@ domain/ handles business logic, timer.py handles focus timer state machine.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from backend.store import DataStore, SqliteStore
 
 # ── Config ──
 DATA_DIR = Path(__file__).parent / "data"
@@ -27,7 +25,7 @@ app = FastAPI(title="NeurOS", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # ── Store — FastAPI-managed singleton via backend/depts.py ──
-from backend.deps import get_store, set_store, reset_store
+from backend.deps import set_store, reset_store  # re-exported for tests
 from backend.routes import (
     checkin, state, tasks, habits, timer_routes, winddown, review,
     soundscapes, declarative, crisis, energy, export, onboarding,
