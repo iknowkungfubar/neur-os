@@ -25,7 +25,7 @@ app = FastAPI(title="NeurOS", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # ── Store — FastAPI-managed singleton via backend/depts.py ──
-from backend.deps import set_store, reset_store  # re-exported for tests
+from backend.deps import set_store, reset_store  # noqa: F401 — re-exported for tests
 from backend.routes import (
     checkin, state, tasks, habits, timer_routes, winddown, review,
     soundscapes, declarative, crisis, energy, export, onboarding,
