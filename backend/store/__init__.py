@@ -742,7 +742,7 @@ class SqliteStore(DataStore):
             if sets:
                 vals.append(mode)
                 c.execute(f"UPDATE soundscape_config SET {', '.join(sets)} WHERE mode = ?", vals)
-                c.connection.commit()
+                c.commit()
         c.close()
 
     def list_sound_files(self) -> list[str]:
