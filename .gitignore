@@ -25,3 +25,4 @@ research/
 *.wav
 neur-os-mobile/node_modules/
 neur-os-mobile/dist/
+.coverage
