@@ -4,9 +4,8 @@ Provides get_store() as a proper FastAPI dependency, avoiding circular imports
 between main.py (app factory) and routes/ (which need the store).
 """
 
-from backend.store import DataStore, SqliteStore
 from backend.config import DB_PATH
-
+from backend.store import DataStore, SqliteStore
 
 _store: DataStore | None = None
 

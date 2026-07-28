@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
+
+from backend.llm import call_llm
 from backend.response import ok
 from backend.schemas import LLMRequest
-from backend.llm import call_llm
 
 router = APIRouter()
 

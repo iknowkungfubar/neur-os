@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
-from backend.store import DataStore
+
 from backend.deps import get_store
 from backend.response import ok
+from backend.store import DataStore
 
 router = APIRouter()
 

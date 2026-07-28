@@ -14,7 +14,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-
 # ── Config ──
 DATA_DIR = Path(__file__).parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
@@ -25,11 +24,28 @@ app = FastAPI(title="NeurOS", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # ── Store — FastAPI-managed singleton via backend/depts.py ──
-from backend.deps import set_store, reset_store  # noqa: F401 — re-exported for tests
+from backend.deps import reset_store, set_store  # noqa: F401 — re-exported for tests
 from backend.routes import (
-    checkin, state, tasks, habits, timer_routes, winddown, review,
-    soundscapes, declarative, crisis, energy, export, onboarding,
-    passivelog, dopamine, interoception, templates_api, sync, admin, brain,
+    admin,
+    brain,
+    checkin,
+    crisis,
+    declarative,
+    dopamine,
+    energy,
+    export,
+    habits,
+    interoception,
+    onboarding,
+    passivelog,
+    review,
+    soundscapes,
+    state,
+    sync,
+    tasks,
+    templates_api,
+    timer_routes,
+    winddown,
 )
 
 app.include_router(checkin.router)

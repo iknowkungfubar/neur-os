@@ -4,10 +4,11 @@ from __future__ import annotations
 import json
 
 from fastapi import APIRouter, Depends
-from backend.store import DataStore
+
 from backend.deps import get_store
 from backend.response import ok
 from backend.schemas import OnboardingChat
+from backend.store import DataStore
 
 router = APIRouter()
 

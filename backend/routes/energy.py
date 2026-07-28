@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
-from backend.store import DataStore
+
 from backend.deps import get_store
+from backend.domain.usecases import detect_boom_bust, energy_envelope
 from backend.response import ok
-from backend.domain.usecases import energy_envelope, detect_boom_bust
+from backend.store import DataStore
 
 router = APIRouter()
 

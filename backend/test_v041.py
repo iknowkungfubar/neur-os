@@ -6,8 +6,9 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import backend.main as app_module
 from conftest import unwrap
+
+import backend.main as app_module
 from backend.store import InMemoryStore
 
 # Use InMemoryStore — no file I/O, each file gets a fresh store

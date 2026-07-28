@@ -1,16 +1,18 @@
 """Tasks routes."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
-from datetime import date
-from backend.store import DataStore
-from backend.deps import get_store
-from backend.response import ok
-from backend.schemas import TaskCreate, TaskUpdate
-from backend.config import ENERGY_TAGS
-from backend.llm import call_llm
 import json
 import re
+from datetime import date
+
+from fastapi import APIRouter, Depends, HTTPException
+
+from backend.config import ENERGY_TAGS
+from backend.deps import get_store
+from backend.llm import call_llm
+from backend.response import ok
+from backend.schemas import TaskCreate, TaskUpdate
+from backend.store import DataStore
 
 router = APIRouter()
 

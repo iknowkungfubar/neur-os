@@ -1,14 +1,16 @@
 """Tests for Phase 5: E2EE sync relay and admin night mode."""
-import sys
 import os
+import sys
 import tempfile
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 tmp = tempfile.mkdtemp()
 
-from fastapi.testclient import TestClient
-import backend.main as m
 from conftest import unwrap
+from fastapi.testclient import TestClient
+
+import backend.main as m
 from backend.store import SqliteStore
 
 store = SqliteStore(m.Path(tmp) / 'neur-os.db')

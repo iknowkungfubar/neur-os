@@ -1,10 +1,12 @@
 """Admin routes."""
 from __future__ import annotations
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from pathlib import Path
 import uuid
 from datetime import datetime
+from pathlib import Path
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
 from backend.response import ok
 
 router = APIRouter()
