@@ -3,6 +3,7 @@
 Globals extracted from main.py so route modules can access them
 without circular imports.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

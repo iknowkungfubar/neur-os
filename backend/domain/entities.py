@@ -4,7 +4,10 @@
 #
 class EnergyBattery:
     """0-100% battery model. Has drain rate, charge efficiency, background drain."""
-    def __init__(self, percentage: float = 50, drain_rate: float = 0.5, charge_rate: float = 0.3):
+
+    def __init__(
+        self, percentage: float = 50, drain_rate: float = 0.5, charge_rate: float = 0.3
+    ):
         self.percentage = max(0.0, min(100.0, percentage))
         self.drain_rate = max(0.0, min(1.0, drain_rate))
         self.charge_rate = max(0.0, min(1.0, charge_rate))
@@ -24,21 +27,35 @@ class EnergyBattery:
 
     @property
     def traffic_light(self) -> str:
-        if self.percentage >= 60: return "green"
-        if self.percentage >= 20: return "amber"
+        if self.percentage >= 60:
+            return "green"
+        if self.percentage >= 20:
+            return "amber"
         return "red"
 
     @property
     def as_dict(self) -> dict:
-        return {"percentage": round(self.percentage, 1), "drain_rate": self.drain_rate,
-                "charge_rate": self.charge_rate, "traffic_light": self.traffic_light}
+        return {
+            "percentage": round(self.percentage, 1),
+            "drain_rate": self.drain_rate,
+            "charge_rate": self.charge_rate,
+            "traffic_light": self.traffic_light,
+        }
 
 
 class Task:
-    def __init__(self, title: str, energy_cost: float = 1.0, energy_tag: str = "medium", status: str = "active"):
+    def __init__(
+        self,
+        title: str,
+        energy_cost: float = 1.0,
+        energy_tag: str = "medium",
+        status: str = "active",
+    ):
         self.title = title
         self.energy_cost = max(0.5, min(5.0, energy_cost))
-        self.energy_tag = energy_tag if energy_tag in ("low", "medium", "high") else "medium"
+        self.energy_tag = (
+            energy_tag if energy_tag in ("low", "medium", "high") else "medium"
+        )
         self.status = status
 
     @property
@@ -56,8 +73,12 @@ class BrainDump:
         self.tasks: list[dict] = []
         self.notes: list[dict] = []
 
-    def add_task(self, title: str, energy_cost: float = 1.0, energy_tag: str = "medium"):
-        self.tasks.append({"title": title, "spoon_cost": energy_cost, "energy_tag": energy_tag})
+    def add_task(
+        self, title: str, energy_cost: float = 1.0, energy_tag: str = "medium"
+    ):
+        self.tasks.append(
+            {"title": title, "spoon_cost": energy_cost, "energy_tag": energy_tag}
+        )
 
     def add_note(self, content: str):
         self.notes.append({"content": content})

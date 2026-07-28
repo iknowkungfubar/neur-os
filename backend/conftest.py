@@ -12,5 +12,7 @@ Usage:
 def unwrap(response) -> dict:
     """Unwrap {ok, data, error} envelope. Asserts ok=True."""
     body = response.json()
-    assert body.get("ok") is True, f"Response not ok: {body.get('error', 'unknown error')}"
+    assert body.get("ok") is True, (
+        f"Response not ok: {body.get('error', 'unknown error')}"
+    )
     return body.get("data")

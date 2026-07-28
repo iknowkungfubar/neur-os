@@ -30,7 +30,7 @@ def _ts_exports() -> set[str]:
         return exports
     text = ts_file.read_text()
     # matches: export class X or export function X
-    for m in re.finditer(r'export\s+(?:class|function)\s+(\w+)', text):
+    for m in re.finditer(r"export\s+(?:class|function)\s+(\w+)", text):
         exports.add(m.group(1))
     return exports
 
@@ -38,13 +38,19 @@ def _ts_exports() -> set[str]:
 def test_domain_interface_in_sync():
     py = _py_exports()
     ts = _ts_exports()
+
     # PascalCase class names are identical between TS and Python.
     # camelCase function names (TS) map to snake_case (Python).
     def to_py(name: str) -> str:
-        return re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower() if name[0].islower() else name
+        return (
+            re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower() if name[0].islower() else name
+        )
+
     ts_in_py = {t for t in ts if to_py(t) in py}
     missing_in_py = ts - ts_in_py
-    assert not missing_in_py, f"TypeScript exports not found in Python domain: {missing_in_py}"
+    assert not missing_in_py, (
+        f"TypeScript exports not found in Python domain: {missing_in_py}"
+    )
     # Warn about Python-only exports
     py_only = py - {to_py(t) for t in ts}
     if py_only:

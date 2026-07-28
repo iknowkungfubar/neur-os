@@ -1,4 +1,5 @@
 """State routes."""
+
 from __future__ import annotations
 
 from datetime import date
@@ -12,9 +13,11 @@ from backend.store import DataStore
 
 router = APIRouter()
 
+
 @router.get("/api/mode")
 async def get_mode(store: DataStore = Depends(get_store)):
     return ok({"mode": store.get_state()["mode"]})
+
 
 @router.put("/api/mode")
 async def set_mode(data: ModeUpdate, store: DataStore = Depends(get_store)):
@@ -24,6 +27,7 @@ async def set_mode(data: ModeUpdate, store: DataStore = Depends(get_store)):
     store.set_mode(today, data.mode)
     return ok({"mode": data.mode})
 
+
 @router.get("/api/state")
 async def get_state(store: DataStore = Depends(get_store)):
     today = date.today().isoformat()
@@ -31,4 +35,3 @@ async def get_state(store: DataStore = Depends(get_store)):
     tasks = [t for t in store.get_tasks("active")]
     timer = store.get_active_timer()
     return ok({"state": state, "tasks": tasks, "active_timer": timer})
-
