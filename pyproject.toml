@@ -33,5 +33,5 @@ python_files = ["test_*.py"]
 asyncio_mode = "auto"
 
 [tool.coverage.report]
-fail_under = 50
+fail_under = 60
 show_missing = true

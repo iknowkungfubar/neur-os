@@ -35,4 +35,4 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
       - name: Run tests with coverage
-        run: uv run pytest backend/ -q --tb=short -x --cov=backend --cov-fail-under=50 --cov-report=term-missing
+        run: PYTHONPATH=backend uv run pytest backend/ -q --tb=short -x --cov=backend --cov-fail-under=60 --cov-report=term-missing
