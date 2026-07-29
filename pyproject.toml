@@ -31,6 +31,7 @@ quote-style = "double"
 testpaths = ["backend"]
 python_files = ["test_*.py"]
 asyncio_mode = "auto"
+pythonpath = ["."]
 
 [tool.coverage.report]
 fail_under = 50
