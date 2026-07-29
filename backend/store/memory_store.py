@@ -286,7 +286,7 @@ class InMemoryStore(DataStore):
 
     # ── Passive Log ──
     def get_today_passive_log(self) -> list[dict]:
-        today = date.today().isoformat()
+        today = datetime.utcnow().strftime("%Y-%m-%d")
         return [p for p in self.passive_logs if p.get("timestamp", "")[:10] == today]
 
     def submit_passive_log(self, response: str, spoons_at_time: float | None = None,
@@ -299,7 +299,7 @@ class InMemoryStore(DataStore):
         return lid
 
     def last_passive_log_today(self) -> dict | None:
-        today = date.today().isoformat()
+        today = datetime.utcnow().strftime("%Y-%m-%d")
         today_logs = [p for p in self.passive_logs if p.get("timestamp", "")[:10] == today]
         return sorted(today_logs, key=lambda p: p.get("timestamp", ""), reverse=True)[0] if today_logs else None
 

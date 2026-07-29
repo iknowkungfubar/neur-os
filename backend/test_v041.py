@@ -8,14 +8,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from conftest import unwrap
 
-import backend.main as app_module
+from backend import deps
 from backend.store import InMemoryStore
 
-# Use InMemoryStore — no file I/O, each file gets a fresh store
+# Use InMemoryStore -- no file I/O, each file gets a fresh store
 store = InMemoryStore()
-app_module.set_store(store)
+deps._store = store
 
 from fastapi.testclient import TestClient
+
+import backend.main as app_module
 
 client = TestClient(app_module.app)
 
@@ -25,6 +27,17 @@ def setup_module():
 
 
 class TestPassiveLog:
+    @classmethod
+    def setup_class(cls):
+        """Reset the global store before running this class's tests.
+        
+        Each test file's module-level code sets the same global _store during
+        import, so the LAST file imported wins. This reset at class setup time
+        ensures we start with a clean store regardless of import order.
+        """
+        from backend.store import InMemoryStore
+        deps._store = InMemoryStore()
+
     def test_check_no_logs_today(self):
         resp = client.get("/api/passive-log/check")
         assert resp.status_code == 200

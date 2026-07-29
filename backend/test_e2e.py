@@ -1,4 +1,4 @@
-"""E2E test suite for NeurOS backend — tests the full API flow."""
+"""E2E test suite for NeurOS backend -- tests the full API flow."""
 import os
 import sys
 
@@ -7,12 +7,21 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from conftest import unwrap
 from fastapi.testclient import TestClient
 
-import backend.main as app_module
+from backend import deps
 from backend.store import InMemoryStore
 
-# Use InMemoryStore — no file I/O, isolated per test file
+# Use InMemoryStore -- no file I/O, isolated per test file
 store = InMemoryStore()
-app_module.set_store(store)
+deps._store = store
+
+# Ensure db placeholder exists so backup endpoint works (InMemoryStore doesn't create the file)
+from backend.config import DB_PATH
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+DB_PATH.touch()
+
+import backend.main as app_module
+
+client = TestClient(app_module.app)
 
 # Seed dopamine menu so soundscape test works
 for name, cat, energy, sort in [
@@ -21,8 +30,6 @@ for name, cat, energy, sort in [
     ("Guilty pleasure show", "desserts", 1.0, 1),
 ]:
     store.dopamine_menu_items.append({"id": f"seed-{name}", "name": name, "category": cat, "energy_required": energy, "sort_order": sort, "created_at": ""})
-
-client = TestClient(app_module.app)
 
 
 class TestE2EFlow:
@@ -136,7 +143,7 @@ class TestE2EFlow:
         assert final_state["state"]["remaining_spoons"] < 10
 
     def test_13_next_task_filters_by_affordability(self):
-        """May return None if all tasks cost more than remaining spoons — that's valid."""
+        """May return None if all tasks cost more than remaining spoons -- that's valid."""
         resp = client.get("/api/tasks/next")
         assert resp.status_code == 200
 
