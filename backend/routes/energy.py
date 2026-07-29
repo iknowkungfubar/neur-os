@@ -1,4 +1,5 @@
 """Energy routes."""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
@@ -9,6 +10,7 @@ from backend.response import ok
 from backend.store import DataStore
 
 router = APIRouter()
+
 
 @router.get("/api/energy-log")
 async def get_energy_log(store: DataStore = Depends(get_store)):
@@ -24,14 +26,14 @@ async def pacing_envelope(store: DataStore = Depends(get_store)):
     history = [e["spoons_remaining"] * 10 for e in recent]
     return ok(energy_envelope(current, len(tasks), history))
 
+
 @router.get("/api/pacing/boom-bust")
 async def boom_bust(store: DataStore = Depends(get_store)):
     recent = store.recent_energy(7)
     history = [e["spoons_remaining"] * 10 for e in recent]
     return ok(detect_boom_bust(history))
 
+
 @router.get("/api/pacing/patterns")
 async def energy_patterns(store: DataStore = Depends(get_store)):
     return ok(store.energy_patterns())
-
-

@@ -164,14 +164,21 @@ class SqliteStore(DataStore):
         c = self._conn()
         row = c.execute("SELECT * FROM daily_state WHERE date = ?", (today,)).fetchone()
         c.close()
-        return self._dict(row) or {"total_spoons": 10, "remaining_spoons": 10, "pain_level": 0, "mode": "green"}
+        return self._dict(row) or {
+            "total_spoons": 10,
+            "remaining_spoons": 10,
+            "pain_level": 0,
+            "mode": "green",
+        }
 
     def get_or_create_state(self, today: str) -> dict:
         return self.get_state(today)
 
     def upsert_state(self, today: str, data: dict) -> None:
         c = self._conn()
-        existing = c.execute("SELECT id FROM daily_state WHERE date = ?", (today,)).fetchone()
+        existing = c.execute(
+            "SELECT id FROM daily_state WHERE date = ?", (today,)
+        ).fetchone()
         if existing:
             sets = ", ".join(f"{k} = ?" for k in data)
             vals = list(data.values()) + [today]
@@ -180,7 +187,10 @@ class SqliteStore(DataStore):
             keys = ", ".join(data.keys())
             placeholders = ", ".join("?" for _ in data)
             vals = list(data.values())
-            c.execute(f"INSERT INTO daily_state (id, date, {keys}) VALUES (?, ?, {placeholders})", [str(uuid.uuid4()), today] + vals)
+            c.execute(
+                f"INSERT INTO daily_state (id, date, {keys}) VALUES (?, ?, {placeholders})",
+                [str(uuid.uuid4()), today] + vals,
+            )
         c.commit()
         c.close()
 
@@ -194,15 +204,19 @@ class SqliteStore(DataStore):
     def log_energy(self, spoons: float, pain: int = 0, note: str = "") -> str:
         lid = str(uuid.uuid4())
         c = self._conn()
-        c.execute("INSERT INTO energy_log (id, spoons_remaining, pain_level, note) VALUES (?, ?, ?, ?)",
-                  (lid, spoons, pain, note))
+        c.execute(
+            "INSERT INTO energy_log (id, spoons_remaining, pain_level, note) VALUES (?, ?, ?, ?)",
+            (lid, spoons, pain, note),
+        )
         c.commit()
         c.close()
         return lid
 
     def get_energy_log(self, limit: int = 30) -> list[dict]:
         c = self._conn()
-        rows = c.execute("SELECT * FROM energy_log ORDER BY timestamp DESC LIMIT ?", (limit,)).fetchall()
+        rows = c.execute(
+            "SELECT * FROM energy_log ORDER BY timestamp DESC LIMIT ?", (limit,)
+        ).fetchall()
         c.close()
         return self._list(rows)
 
@@ -210,7 +224,8 @@ class SqliteStore(DataStore):
         c = self._conn()
         since = (date.today() - timedelta(days=days)).isoformat()
         rows = c.execute(
-            "SELECT * FROM energy_log WHERE date(timestamp) >= ? ORDER BY timestamp", (since,)
+            "SELECT * FROM energy_log WHERE date(timestamp) >= ? ORDER BY timestamp",
+            (since,),
         ).fetchall()
         c.close()
         return self._list(rows)
@@ -228,13 +243,23 @@ class SqliteStore(DataStore):
             FROM energy_log GROUP BY dow ORDER BY dow
         """).fetchall()
         c.close()
-        days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-        best_hour = max(by_hour, key=lambda r: r['avg_energy'])['hour'] if by_hour else 12
-        worst_hour = min(by_hour, key=lambda r: r['avg_energy'])['hour'] if by_hour else 3
-        best_dow = days[max(by_dow, key=lambda r: r['avg_energy'])['dow']] if by_dow else 'Unknown'
+        days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+        best_hour = (
+            max(by_hour, key=lambda r: r["avg_energy"])["hour"] if by_hour else 12
+        )
+        worst_hour = (
+            min(by_hour, key=lambda r: r["avg_energy"])["hour"] if by_hour else 3
+        )
+        best_dow = (
+            days[max(by_dow, key=lambda r: r["avg_energy"])["dow"]]
+            if by_dow
+            else "Unknown"
+        )
         return {
             "by_hour": self._list(by_hour),
-            "by_day": [{"day": days[r['dow']], "avg_energy": r['avg_energy']} for r in by_dow],
+            "by_day": [
+                {"day": days[r["dow"]], "avg_energy": r["avg_energy"]} for r in by_dow
+            ],
             "insight": f"Peak energy: {best_hour}:00. Low point: {worst_hour}:00. Best day: {best_dow}.",
         }
 
@@ -242,9 +267,14 @@ class SqliteStore(DataStore):
     def get_tasks(self, status_filter: str | None = None) -> list[dict]:
         c = self._conn()
         if status_filter:
-            rows = c.execute("SELECT * FROM tasks WHERE status = ? ORDER BY energy_tag, created_at", (status_filter,)).fetchall()
+            rows = c.execute(
+                "SELECT * FROM tasks WHERE status = ? ORDER BY energy_tag, created_at",
+                (status_filter,),
+            ).fetchall()
         else:
-            rows = c.execute("SELECT * FROM tasks ORDER BY energy_tag, created_at").fetchall()
+            rows = c.execute(
+                "SELECT * FROM tasks ORDER BY energy_tag, created_at"
+            ).fetchall()
         c.close()
         return self._list(rows)
 
@@ -253,12 +283,23 @@ class SqliteStore(DataStore):
         c = self._conn()
         c.execute(
             "INSERT INTO tasks (id, title, description, spoon_cost, micro_chunks, energy_tag, recurring) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (tid, data["title"], data.get("description", ""), data.get("spoon_cost", 1.0),
-             json.dumps(data.get("micro_chunks", [])), data.get("energy_tag", "medium"), data.get("recurring", "")),
+            (
+                tid,
+                data["title"],
+                data.get("description", ""),
+                data.get("spoon_cost", 1.0),
+                json.dumps(data.get("micro_chunks", [])),
+                data.get("energy_tag", "medium"),
+                data.get("recurring", ""),
+            ),
         )
         c.commit()
         c.close()
-        return {"id": tid, "spoon_cost": data.get("spoon_cost", 1.0), "micro_chunks": data.get("micro_chunks", [])}
+        return {
+            "id": tid,
+            "spoon_cost": data.get("spoon_cost", 1.0),
+            "micro_chunks": data.get("micro_chunks", []),
+        }
 
     def get_task(self, task_id: str) -> dict | None:
         c = self._conn()
@@ -273,10 +314,16 @@ class SqliteStore(DataStore):
             c.close()
             return False
         if "status" in updates and updates["status"] == "completed":
-            c.execute("UPDATE tasks SET status = 'completed', completed_at = datetime('now') WHERE id = ?", (task_id,))
+            c.execute(
+                "UPDATE tasks SET status = 'completed', completed_at = datetime('now') WHERE id = ?",
+                (task_id,),
+            )
         for key, val in updates.items():
             if key == "micro_chunks" and val is not None:
-                c.execute("UPDATE tasks SET micro_chunks = ? WHERE id = ?", (json.dumps(val), task_id))
+                c.execute(
+                    "UPDATE tasks SET micro_chunks = ? WHERE id = ?",
+                    (json.dumps(val), task_id),
+                )
             elif key in ("spoon_cost",):
                 c.execute(f"UPDATE tasks SET {key} = ? WHERE id = ?", (val, task_id))
         c.commit()
@@ -291,20 +338,42 @@ class SqliteStore(DataStore):
             return {"status": "error", "error": "Task not found"}
         task = dict(task)
         today = date.today().isoformat()
-        state = c.execute("SELECT * FROM daily_state WHERE date = ?", (today,)).fetchone()
+        state = c.execute(
+            "SELECT * FROM daily_state WHERE date = ?", (today,)
+        ).fetchone()
         cost = spoon_cost or task.get("spoon_cost", 1)
         new_remaining = 0
         if state:
             new_remaining = max(0, state["remaining_spoons"] - cost)
-            c.execute("UPDATE daily_state SET remaining_spoons = ? WHERE date = ?", (new_remaining, today))
-        c.execute("UPDATE tasks SET status = 'completed', completed_at = datetime('now') WHERE id = ?", (task_id,))
-        c.execute("INSERT INTO energy_log (id, spoons_remaining, note) VALUES (?, ?, ?)",
-                  (str(uuid.uuid4()), new_remaining if state else 0, f"Completed: {task['title']}"))
+            c.execute(
+                "UPDATE daily_state SET remaining_spoons = ? WHERE date = ?",
+                (new_remaining, today),
+            )
+        c.execute(
+            "UPDATE tasks SET status = 'completed', completed_at = datetime('now') WHERE id = ?",
+            (task_id,),
+        )
+        c.execute(
+            "INSERT INTO energy_log (id, spoons_remaining, note) VALUES (?, ?, ?)",
+            (
+                str(uuid.uuid4()),
+                new_remaining if state else 0,
+                f"Completed: {task['title']}",
+            ),
+        )
         if task.get("recurring"):
             new_id = str(uuid.uuid4())
             c.execute(
                 "INSERT INTO tasks (id, title, description, spoon_cost, micro_chunks, energy_tag, recurring) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (new_id, task["title"], task["description"], task["spoon_cost"], task["micro_chunks"], task["energy_tag"], task["recurring"]),
+                (
+                    new_id,
+                    task["title"],
+                    task["description"],
+                    task["spoon_cost"],
+                    task["micro_chunks"],
+                    task["energy_tag"],
+                    task["recurring"],
+                ),
             )
         c.commit()
         c.close()
@@ -332,7 +401,8 @@ class SqliteStore(DataStore):
     def get_habits(self, today: str) -> list[dict]:
         c = self._conn()
         rows = c.execute(
-            "SELECT h.*, (h.last_completed = ?) AS done_today FROM habits h ORDER BY h.created_at", (today,)
+            "SELECT h.*, (h.last_completed = ?) AS done_today FROM habits h ORDER BY h.created_at",
+            (today,),
         ).fetchall()
         c.close()
         return self._list(rows)
@@ -342,8 +412,14 @@ class SqliteStore(DataStore):
         c = self._conn()
         c.execute(
             "INSERT INTO habits (id, title, description, frequency, spoon_cost, energy_tag) VALUES (?, ?, ?, ?, ?, ?)",
-            (hid, data["title"], data.get("description", ""), data.get("frequency", "daily"),
-             data.get("spoon_cost", 0.5), data.get("energy_tag", "low")),
+            (
+                hid,
+                data["title"],
+                data.get("description", ""),
+                data.get("frequency", "daily"),
+                data.get("spoon_cost", 0.5),
+                data.get("energy_tag", "low"),
+            ),
         )
         c.commit()
         c.close()
@@ -364,7 +440,9 @@ class SqliteStore(DataStore):
     # ── Timer ──
     def stop_all_timers(self) -> None:
         c = self._conn()
-        c.execute("UPDATE timer_sessions SET status = 'stopped', completed_at = datetime('now') WHERE status IN ('running','paused')")
+        c.execute(
+            "UPDATE timer_sessions SET status = 'stopped', completed_at = datetime('now') WHERE status IN ('running','paused')"
+        )
         c.commit()
         c.close()
 
@@ -373,13 +451,24 @@ class SqliteStore(DataStore):
         c = self._conn()
         c.execute(
             "INSERT INTO timer_sessions (id, task_id, duration_minutes, soundscape, body_doubling, started_as) VALUES (?, ?, ?, ?, ?, ?)",
-            (tid, data.get("task_id"), data.get("duration_minutes", 25),
-             data.get("soundscape", ""), 1 if data.get("body_doubling") else 0, data.get("started_as", "focus")),
+            (
+                tid,
+                data.get("task_id"),
+                data.get("duration_minutes", 25),
+                data.get("soundscape", ""),
+                1 if data.get("body_doubling") else 0,
+                data.get("started_as", "focus"),
+            ),
         )
         c.commit()
         c.close()
-        return {"id": tid, "status": "running", "duration_minutes": data.get("duration_minutes", 25),
-                "body_doubling": data.get("body_doubling", False), "started_as": data.get("started_as", "focus")}
+        return {
+            "id": tid,
+            "status": "running",
+            "duration_minutes": data.get("duration_minutes", 25),
+            "body_doubling": data.get("body_doubling", False),
+            "started_as": data.get("started_as", "focus"),
+        }
 
     def get_active_timer(self) -> dict | None:
         c = self._conn()
@@ -393,7 +482,12 @@ class SqliteStore(DataStore):
         elapsed = r["elapsed_seconds"]
         if r["status"] == "running":
             try:
-                elapsed += int((datetime.utcnow() - datetime.strptime(r["started_at"][:19], "%Y-%m-%d %H:%M:%S")).total_seconds())
+                elapsed += int(
+                    (
+                        datetime.utcnow()
+                        - datetime.strptime(r["started_at"][:19], "%Y-%m-%d %H:%M:%S")
+                    ).total_seconds()
+                )
             except ValueError:
                 pass
         r["current_elapsed"] = elapsed
@@ -416,7 +510,9 @@ class SqliteStore(DataStore):
 
     def upsert_wind_down(self, today: str, data: dict) -> None:
         c = self._conn()
-        existing = c.execute("SELECT id FROM wind_down WHERE date = ?", (today,)).fetchone()
+        existing = c.execute(
+            "SELECT id FROM wind_down WHERE date = ?", (today,)
+        ).fetchone()
         if existing:
             sets = ", ".join(f"{k} = ?" for k in data)
             vals = list(data.values()) + [today]
@@ -425,13 +521,18 @@ class SqliteStore(DataStore):
             keys = ", ".join(data.keys())
             placeholders = ", ".join("?" for _ in data)
             vals = [str(uuid.uuid4()), today] + list(data.values())
-            c.execute(f"INSERT INTO wind_down (id, date, {keys}) VALUES (?, ?, {placeholders})", vals)
+            c.execute(
+                f"INSERT INTO wind_down (id, date, {keys}) VALUES (?, ?, {placeholders})",
+                vals,
+            )
         c.commit()
         c.close()
 
     def week_wind_down(self, week_ago: str) -> list[dict]:
         c = self._conn()
-        rows = c.execute("SELECT * FROM wind_down WHERE date >= ? ORDER BY date DESC", (week_ago,)).fetchall()
+        rows = c.execute(
+            "SELECT * FROM wind_down WHERE date >= ? ORDER BY date DESC", (week_ago,)
+        ).fetchall()
         c.close()
         return self._list(rows)
 
@@ -439,16 +540,23 @@ class SqliteStore(DataStore):
     def activate_crisis(self, crisis_type: str = "sensory_overload") -> str:
         cid = str(uuid.uuid4())
         c = self._conn()
-        c.execute("INSERT INTO crisis_log (id, crisis_type) VALUES (?, ?)", (cid, crisis_type))
+        c.execute(
+            "INSERT INTO crisis_log (id, crisis_type) VALUES (?, ?)", (cid, crisis_type)
+        )
         c.commit()
         c.close()
         return cid
 
     def resolve_crisis(self) -> bool:
         c = self._conn()
-        row = c.execute("SELECT id FROM crisis_log WHERE resolved_at IS NULL ORDER BY timestamp DESC LIMIT 1").fetchone()
+        row = c.execute(
+            "SELECT id FROM crisis_log WHERE resolved_at IS NULL ORDER BY timestamp DESC LIMIT 1"
+        ).fetchone()
         if row:
-            c.execute("UPDATE crisis_log SET resolved_at = datetime('now') WHERE id = ?", (row["id"],))
+            c.execute(
+                "UPDATE crisis_log SET resolved_at = datetime('now') WHERE id = ?",
+                (row["id"],),
+            )
             c.commit()
             c.close()
             return True
@@ -458,17 +566,22 @@ class SqliteStore(DataStore):
     def get_crises_since(self, since: str) -> list[dict]:
         c = self._conn()
         rows = c.execute(
-            "SELECT * FROM crisis_log WHERE date(timestamp) >= ? ORDER BY timestamp DESC", (since,)
+            "SELECT * FROM crisis_log WHERE date(timestamp) >= ? ORDER BY timestamp DESC",
+            (since,),
         ).fetchall()
         c.close()
         return self._list(rows)
 
     # ── Brain Dump ──
-    def save_brain_dump(self, text: str, structured: dict, source: str = "textarea") -> str:
+    def save_brain_dump(
+        self, text: str, structured: dict, source: str = "textarea"
+    ) -> str:
         bid = str(uuid.uuid4())
         c = self._conn()
-        c.execute("INSERT INTO brain_dumps (id, raw_text, structured_json, source) VALUES (?, ?, ?, ?)",
-                  (bid, text, json.dumps(structured), source))
+        c.execute(
+            "INSERT INTO brain_dumps (id, raw_text, structured_json, source) VALUES (?, ?, ?, ?)",
+            (bid, text, json.dumps(structured), source),
+        )
         c.commit()
         c.close()
         return bid
@@ -494,7 +607,9 @@ class SqliteStore(DataStore):
     # ── Dopamine Menu ──
     def get_dopamine_menu(self) -> dict[str, list[dict]]:
         c = self._conn()
-        items = c.execute("SELECT * FROM dopamine_menu_items ORDER BY sort_order").fetchall()
+        items = c.execute(
+            "SELECT * FROM dopamine_menu_items ORDER BY sort_order"
+        ).fetchall()
         c.close()
         menu = {"starters": [], "sides": [], "mains": [], "desserts": []}
         for item in items:
@@ -508,7 +623,13 @@ class SqliteStore(DataStore):
         c = self._conn()
         c.execute(
             "INSERT INTO dopamine_menu_items (id, name, category, energy_required, sort_order) VALUES (?, ?, ?, ?, ?)",
-            (str(uuid.uuid4()), data["name"], data["category"], data.get("energy_required", 0.5), data.get("sort_order", 99)),
+            (
+                str(uuid.uuid4()),
+                data["name"],
+                data["category"],
+                data.get("energy_required", 0.5),
+                data.get("sort_order", 99),
+            ),
         )
         c.commit()
         c.close()
@@ -522,14 +643,18 @@ class SqliteStore(DataStore):
     # ── Interoception ──
     def log_interoception(self, signals: list, mood: str = "", note: str = "") -> None:
         c = self._conn()
-        c.execute("INSERT INTO interoception_log (id, signals, mood, note) VALUES (?, ?, ?, ?)",
-                  (str(uuid.uuid4()), json.dumps(signals), mood, note))
+        c.execute(
+            "INSERT INTO interoception_log (id, signals, mood, note) VALUES (?, ?, ?, ?)",
+            (str(uuid.uuid4()), json.dumps(signals), mood, note),
+        )
         c.commit()
         c.close()
 
     def get_interoception(self, limit: int = 20) -> list[dict]:
         c = self._conn()
-        rows = c.execute("SELECT * FROM interoception_log ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        rows = c.execute(
+            "SELECT * FROM interoception_log ORDER BY created_at DESC LIMIT ?", (limit,)
+        ).fetchall()
         c.close()
         return self._list(rows)
 
@@ -543,8 +668,13 @@ class SqliteStore(DataStore):
         c.close()
         return self._list(rows)
 
-    def submit_passive_log(self, response: str, spoons_at_time: float | None = None,
-                           current_task_id: str | None = None, source: str = "notification") -> str:
+    def submit_passive_log(
+        self,
+        response: str,
+        spoons_at_time: float | None = None,
+        current_task_id: str | None = None,
+        source: str = "notification",
+    ) -> str:
         lid = str(uuid.uuid4())
         c = self._conn()
         c.execute(
@@ -566,7 +696,9 @@ class SqliteStore(DataStore):
     # ── Onboarding ──
     def get_onboarding(self) -> dict | None:
         c = self._conn()
-        row = c.execute("SELECT * FROM onboarding_state WHERE id = 'current'").fetchone()
+        row = c.execute(
+            "SELECT * FROM onboarding_state WHERE id = 'current'"
+        ).fetchone()
         c.close()
         return self._dict(row)
 
@@ -584,7 +716,15 @@ class SqliteStore(DataStore):
     def export_all(self) -> dict[str, list[dict]]:
         c = self._conn()
         data = {}
-        for table in ["daily_state", "tasks", "energy_log", "crisis_log", "timer_sessions", "habits", "wind_down"]:
+        for table in [
+            "daily_state",
+            "tasks",
+            "energy_log",
+            "crisis_log",
+            "timer_sessions",
+            "habits",
+            "wind_down",
+        ]:
             rows = c.execute(f"SELECT * FROM {table}").fetchall()
             data[table] = self._list(rows)
         c.close()
@@ -597,7 +737,10 @@ class SqliteStore(DataStore):
             cols = ", ".join(row.keys())
             placeholders = ", ".join("?" for _ in row)
             try:
-                c.execute(f"INSERT OR IGNORE INTO {table} ({cols}) VALUES ({placeholders})", list(row.values()))
+                c.execute(
+                    f"INSERT OR IGNORE INTO {table} ({cols}) VALUES ({placeholders})",
+                    list(row.values()),
+                )
                 count += 1
             except Exception:
                 pass
@@ -608,11 +751,15 @@ class SqliteStore(DataStore):
     def get_template(self, type: str) -> dict:
         c = self._conn()
         if type == "dopamine_menu":
-            rows = c.execute("SELECT name, category, energy_required FROM dopamine_menu_items ORDER BY sort_order").fetchall()
+            rows = c.execute(
+                "SELECT name, category, energy_required FROM dopamine_menu_items ORDER BY sort_order"
+            ).fetchall()
             c.close()
             return {"type": type, "items": self._list(rows)}
         elif type == "pacing_config":
-            rows = c.execute("SELECT mode, sound_file, volume FROM soundscape_config ORDER BY mode").fetchall()
+            rows = c.execute(
+                "SELECT mode, sound_file, volume FROM soundscape_config ORDER BY mode"
+            ).fetchall()
             c.close()
             return {"type": type, "soundscapes": self._list(rows)}
         c.close()
@@ -625,7 +772,12 @@ class SqliteStore(DataStore):
             for item in items:
                 c.execute(
                     "INSERT OR IGNORE INTO dopamine_menu_items (id, name, category, energy_required) VALUES (?, ?, ?, ?)",
-                    (str(uuid.uuid4()), item["name"], item["category"], item.get("energy_required", 0.5)),
+                    (
+                        str(uuid.uuid4()),
+                        item["name"],
+                        item["category"],
+                        item.get("energy_required", 0.5),
+                    ),
                 )
                 count += 1
         c.commit()
@@ -633,7 +785,9 @@ class SqliteStore(DataStore):
         return count
 
     # ── Sync ──
-    def sync_upload(self, device_id: str, collection: str, encrypted_blob: str, version: int = 1) -> None:
+    def sync_upload(
+        self, device_id: str, collection: str, encrypted_blob: str, version: int = 1
+    ) -> None:
         c = self._conn()
         c.execute(
             "INSERT INTO sync_data (id, device_id, collection, encrypted_blob, blob_version) VALUES (?, ?, ?, ?, ?)",
@@ -642,7 +796,9 @@ class SqliteStore(DataStore):
         c.commit()
         c.close()
 
-    def sync_download(self, device_id: str, collection: str, since: str = "") -> list[dict]:
+    def sync_download(
+        self, device_id: str, collection: str, since: str = ""
+    ) -> list[dict]:
         c = self._conn()
         if since:
             rows = c.execute(
@@ -660,19 +816,38 @@ class SqliteStore(DataStore):
     # ── Review ──
     def weekly_review(self, week_ago: str, today: str) -> dict:
         c = self._conn()
-        energy_states = c.execute("SELECT * FROM daily_state WHERE date >= ? AND date <= ? ORDER BY date", (week_ago, today)).fetchall()
-        completed = c.execute("SELECT * FROM tasks WHERE completed_at IS NOT NULL AND date(completed_at) >= ? ORDER BY completed_at DESC", (week_ago,)).fetchall()
-        energy_entries = c.execute("SELECT * FROM energy_log WHERE date(timestamp) >= ? ORDER BY timestamp", (week_ago,)).fetchall()
-        timer_sessions = c.execute("SELECT * FROM timer_sessions WHERE date(started_at) >= ? ORDER BY started_at", (week_ago,)).fetchall()
-        crises = c.execute("SELECT * FROM crisis_log WHERE date(timestamp) >= ? ORDER BY timestamp DESC", (week_ago,)).fetchall()
+        energy_states = c.execute(
+            "SELECT * FROM daily_state WHERE date >= ? AND date <= ? ORDER BY date",
+            (week_ago, today),
+        ).fetchall()
+        completed = c.execute(
+            "SELECT * FROM tasks WHERE completed_at IS NOT NULL AND date(completed_at) >= ? ORDER BY completed_at DESC",
+            (week_ago,),
+        ).fetchall()
+        energy_entries = c.execute(
+            "SELECT * FROM energy_log WHERE date(timestamp) >= ? ORDER BY timestamp",
+            (week_ago,),
+        ).fetchall()
+        timer_sessions = c.execute(
+            "SELECT * FROM timer_sessions WHERE date(started_at) >= ? ORDER BY started_at",
+            (week_ago,),
+        ).fetchall()
+        crises = c.execute(
+            "SELECT * FROM crisis_log WHERE date(timestamp) >= ? ORDER BY timestamp DESC",
+            (week_ago,),
+        ).fetchall()
         habits = c.execute("SELECT title FROM habits ORDER BY created_at").fetchall()
-        wind_entries = c.execute("SELECT * FROM wind_down WHERE date >= ? ORDER BY date DESC", (week_ago,)).fetchall()
+        wind_entries = c.execute(
+            "SELECT * FROM wind_down WHERE date >= ? ORDER BY date DESC", (week_ago,)
+        ).fetchall()
         c.close()
 
         avg_spoons = 0
         avg_pain = 0
         if energy_states:
-            avg_spoons = sum(float(s["total_spoons"]) for s in energy_states) / len(energy_states)
+            avg_spoons = sum(float(s["total_spoons"]) for s in energy_states) / len(
+                energy_states
+            )
             avg_pain = sum(s["pain_level"] for s in energy_states) / len(energy_states)
 
         total_focus_minutes = 0
@@ -704,13 +879,15 @@ class SqliteStore(DataStore):
             "SELECT * FROM daily_state WHERE date >= ? ORDER BY date", (week_ago,)
         ).fetchall()
         completed_tasks = c.execute(
-            "SELECT title, energy_tag, spoon_cost FROM tasks WHERE completed_at IS NOT NULL AND date(completed_at) >= ?", (week_ago,)
+            "SELECT title, energy_tag, spoon_cost FROM tasks WHERE completed_at IS NOT NULL AND date(completed_at) >= ?",
+            (week_ago,),
         ).fetchall()
         wind_entries = c.execute(
             "SELECT * FROM wind_down WHERE date >= ? ORDER BY date", (week_ago,)
         ).fetchall()
         crises = c.execute(
-            "SELECT date(timestamp) as d FROM crisis_log WHERE date(timestamp) >= ? ORDER BY timestamp", (week_ago,)
+            "SELECT date(timestamp) as d FROM crisis_log WHERE date(timestamp) >= ? ORDER BY timestamp",
+            (week_ago,),
         ).fetchall()
         c.close()
 
@@ -725,17 +902,27 @@ class SqliteStore(DataStore):
         else:
             lines.append(f"**{days_with_data} days** tracked this week.")
             if total_tasks > 0:
-                lines.append(f"Completed **{total_tasks} tasks** ({high_spoon_tasks} high-energy).")
+                lines.append(
+                    f"Completed **{total_tasks} tasks** ({high_spoon_tasks} high-energy)."
+                )
             else:
-                lines.append("No tasks completed this week - that's okay. Some weeks are for rest.")
+                lines.append(
+                    "No tasks completed this week - that's okay. Some weeks are for rest."
+                )
             if total_crises > 0:
-                lines.append(f"Crisis mode activated **{total_crises} time(s)** this week.")
+                lines.append(
+                    f"Crisis mode activated **{total_crises} time(s)** this week."
+                )
             if energy_states:
                 best_day = max(energy_states, key=lambda s: s["remaining_spoons"])
-                lines.append(f"Highest energy day: **{best_day['date']}** ({best_day['remaining_spoons']}/{best_day['total_spoons']} spoons).")
+                lines.append(
+                    f"Highest energy day: **{best_day['date']}** ({best_day['remaining_spoons']}/{best_day['total_spoons']} spoons)."
+                )
                 worst_day = min(energy_states, key=lambda s: s["remaining_spoons"])
                 if worst_day["remaining_spoons"] < best_day["remaining_spoons"]:
-                    lines.append(f"Lowest energy day: **{worst_day['date']}** ({worst_day['remaining_spoons']}/{worst_day['total_spoons']} spoons).")
+                    lines.append(
+                        f"Lowest energy day: **{worst_day['date']}** ({worst_day['remaining_spoons']}/{worst_day['total_spoons']} spoons)."
+                    )
             if wind_entries:
                 themes = []
                 for e in wind_entries:
@@ -748,7 +935,9 @@ class SqliteStore(DataStore):
     # ── Soundscapes (SqliteStore) ──
     def get_soundscape_configs(self) -> list[dict]:
         c = self._conn()
-        rows = c.execute("SELECT mode, sound_file, volume, loop FROM soundscape_config ORDER BY mode").fetchall()
+        rows = c.execute(
+            "SELECT mode, sound_file, volume, loop FROM soundscape_config ORDER BY mode"
+        ).fetchall()
         c.close()
         return [dict(r) for r in rows]
 
@@ -756,7 +945,11 @@ class SqliteStore(DataStore):
         c = self._conn()
         if updates:
             sets, vals = [], []
-            for key, col in [("sound_file", "sound_file"), ("volume", "volume"), ("loop", "loop")]:
+            for key, col in [
+                ("sound_file", "sound_file"),
+                ("volume", "volume"),
+                ("loop", "loop"),
+            ]:
                 if key in updates:
                     sets.append(f"{col} = ?")
                     v = updates[key]
@@ -767,12 +960,22 @@ class SqliteStore(DataStore):
                     vals.append(v)
             if sets:
                 vals.append(mode)
-                c.execute(f"UPDATE soundscape_config SET {', '.join(sets)} WHERE mode = ?", vals)
+                c.execute(
+                    f"UPDATE soundscape_config SET {', '.join(sets)} WHERE mode = ?",
+                    vals,
+                )
                 c.connection.commit()
         c.close()
 
     def list_sound_files(self) -> list[str]:
         from backend.config import SOUNDSCAPES_DIR
+
         if SOUNDSCAPES_DIR.exists():
-            return sorted([f.name for f in SOUNDSCAPES_DIR.iterdir() if f.suffix in (".wav", ".ogg", ".mp3", ".flac")])
+            return sorted(
+                [
+                    f.name
+                    for f in SOUNDSCAPES_DIR.iterdir()
+                    if f.suffix in (".wav", ".ogg", ".mp3", ".flac")
+                ]
+            )
         return []

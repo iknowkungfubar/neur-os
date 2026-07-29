@@ -1,4 +1,5 @@
 """E2E test suite for NeurOS backend -- tests the full API flow."""
+
 import os
 import sys
 
@@ -16,6 +17,7 @@ deps._store = store
 
 # Ensure db placeholder exists so backup endpoint works (InMemoryStore doesn't create the file)
 from backend.config import DB_PATH
+
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 DB_PATH.touch()
 
@@ -29,7 +31,16 @@ for name, cat, energy, sort in [
     ("Walk outside", "mains", 2.0, 1),
     ("Guilty pleasure show", "desserts", 1.0, 1),
 ]:
-    store.dopamine_menu_items.append({"id": f"seed-{name}", "name": name, "category": cat, "energy_required": energy, "sort_order": sort, "created_at": ""})
+    store.dopamine_menu_items.append(
+        {
+            "id": f"seed-{name}",
+            "name": name,
+            "category": cat,
+            "energy_required": energy,
+            "sort_order": sort,
+            "created_at": "",
+        }
+    )
 
 
 class TestE2EFlow:
@@ -47,10 +58,13 @@ class TestE2EFlow:
             "What's one thing you'd like to be able to do more consistently?",
         ]
         for turn, expected in enumerate(questions):
-            resp = client.post("/api/onboarding/chat", json={
-                "history": [{"role": "user", "content": "Response"}],
-                "turn": turn,
-            })
+            resp = client.post(
+                "/api/onboarding/chat",
+                json={
+                    "history": [{"role": "user", "content": "Response"}],
+                    "turn": turn,
+                },
+            )
             assert resp.status_code == 200
             data = unwrap(resp)
             assert data["response"] == expected
@@ -61,9 +75,14 @@ class TestE2EFlow:
         assert unwrap(resp)["mode"] == "green"
 
     def test_04_checkin_sets_spoons(self):
-        resp = client.post("/api/check-in", json={
-            "spoons": 8, "pain_level": 1, "note": "feeling okay",
-        })
+        resp = client.post(
+            "/api/check-in",
+            json={
+                "spoons": 8,
+                "pain_level": 1,
+                "note": "feeling okay",
+            },
+        )
         assert resp.status_code == 200
 
     def test_05_add_tasks(self):
@@ -75,9 +94,14 @@ class TestE2EFlow:
             ("Weekly planning", "high", 2.5),
         ]
         for title, tag, cost in tasks_data:
-            resp = client.post("/api/tasks", json={
-                "title": title, "energy_tag": tag, "spoon_cost": cost,
-            })
+            resp = client.post(
+                "/api/tasks",
+                json={
+                    "title": title,
+                    "energy_tag": tag,
+                    "spoon_cost": cost,
+                },
+            )
             assert resp.status_code == 200
         state = unwrap(client.get("/api/state"))
         assert len(state["tasks"]) == 5
@@ -92,10 +116,15 @@ class TestE2EFlow:
         state = unwrap(client.get("/api/state"))
         tasks = state["tasks"]
         assert len(tasks) >= 2
-        resp = client.post("/api/timer", json={
-            "action": "start", "task_id": tasks[0]["id"],
-            "duration_minutes": 25, "body_doubling": True,
-        })
+        resp = client.post(
+            "/api/timer",
+            json={
+                "action": "start",
+                "task_id": tasks[0]["id"],
+                "duration_minutes": 25,
+                "body_doubling": True,
+            },
+        )
         assert resp.status_code == 200
         data = unwrap(resp)
         assert data["status"] == "running"
@@ -148,20 +177,28 @@ class TestE2EFlow:
         assert resp.status_code == 200
 
     def test_15_wind_down_save_and_retrieve(self):
-        resp = client.post("/api/wind-down", json={
-            "went_well": "Finished the proposal",
-            "drained": "Morning brain fog",
-            "tomorrow_one": "Review testimonials",
-        })
+        resp = client.post(
+            "/api/wind-down",
+            json={
+                "went_well": "Finished the proposal",
+                "drained": "Morning brain fog",
+                "tomorrow_one": "Review testimonials",
+            },
+        )
         assert resp.status_code == 200
         resp2 = client.get("/api/wind-down/today")
         entry = unwrap(resp2)["entry"]
         assert entry["went_well"] == "Finished the proposal"
 
     def test_16_habits_create_and_check(self):
-        resp = client.post("/api/habits", json={
-            "title": "Drink water", "frequency": "daily", "spoon_cost": 0.5,
-        })
+        resp = client.post(
+            "/api/habits",
+            json={
+                "title": "Drink water",
+                "frequency": "daily",
+                "spoon_cost": 0.5,
+            },
+        )
         assert resp.status_code == 200
         hid = unwrap(resp)["id"]
         check = client.post(f"/api/habits/{hid}/check")
@@ -189,13 +226,23 @@ class TestE2EFlow:
         assert len(logs["entries"]) >= 1
 
     def test_20_crisis_detection_scoring(self):
-        resp = client.post("/api/crisis/check", json={
-            "cognitive_load": 0.1, "frustration_markers": 0.0, "error_rate": 0.0,
-        })
+        resp = client.post(
+            "/api/crisis/check",
+            json={
+                "cognitive_load": 0.1,
+                "frustration_markers": 0.0,
+                "error_rate": 0.0,
+            },
+        )
         assert unwrap(resp)["trigger"] is False
-        resp2 = client.post("/api/crisis/check", json={
-            "cognitive_load": 0.9, "frustration_markers": 0.9, "error_rate": 0.5,
-        })
+        resp2 = client.post(
+            "/api/crisis/check",
+            json={
+                "cognitive_load": 0.9,
+                "frustration_markers": 0.9,
+                "error_rate": 0.5,
+            },
+        )
         assert unwrap(resp2)["trigger"] is True
 
     def test_23_backup_creates_file(self):
@@ -204,9 +251,12 @@ class TestE2EFlow:
         assert "backup" in unwrap(resp)
 
     def test_24_declarative_offline_fallback(self):
-        resp = client.post("/api/declarative", json={
-            "prompt": "You need to clean the kitchen",
-        })
+        resp = client.post(
+            "/api/declarative",
+            json={
+                "prompt": "You need to clean the kitchen",
+            },
+        )
         assert resp.status_code == 200
         data = unwrap(resp)
         assert data["original"] == "You need to clean the kitchen"
@@ -219,10 +269,17 @@ class TestE2EFlow:
 
     def test_26_import_merges_data(self):
         export = client.get("/api/export/json").json()
-        export.setdefault("tasks", []).append({
-            "id": "imported-task-id", "title": "Imported task", "status": "active",
-            "spoon_cost": 1.0, "energy_tag": "low", "micro_chunks": "[]", "recurring": "",
-        })
+        export.setdefault("tasks", []).append(
+            {
+                "id": "imported-task-id",
+                "title": "Imported task",
+                "status": "active",
+                "spoon_cost": 1.0,
+                "energy_tag": "low",
+                "micro_chunks": "[]",
+                "recurring": "",
+            }
+        )
         resp = client.post("/api/import", json=export)
         assert unwrap(resp)["imported"]["tasks"] >= 1
 

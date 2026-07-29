@@ -6,6 +6,7 @@ Local-first, privacy-preserving, trauma-informed.
 Architecture: routes/ modules handle HTTP, store/ handles persistence,
 domain/ handles business logic, timer.py handles focus timer state machine.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -21,7 +22,9 @@ DB_PATH = DATA_DIR / "neur-os.db"
 
 # ── App Factory ──
 app = FastAPI(title="NeurOS", version="1.0.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
+)
 
 # ── Store — FastAPI-managed singleton via backend/depts.py ──
 from backend.deps import reset_store, set_store  # noqa: F401 — re-exported for tests

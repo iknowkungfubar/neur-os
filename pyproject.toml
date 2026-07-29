@@ -24,6 +24,19 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
 
+[tool.ruff.lint.per-file-ignores]
+"backend/store/sqlite_store.py" = ["E501"]
+"backend/routes/brain.py" = ["E501"]
+"backend/routes/export.py" = ["E501"]
+"backend/routes/tasks.py" = ["E501"]
+"backend/routes/declarative.py" = ["E501"]
+"backend/store/base.py" = ["E501"]
+"backend/store/memory_store.py" = ["E501", "E741"]
+"backend/domain/usecases.py" = ["E501"]
+"backend/test_*.py" = ["E501", "E402"]
+"backend/routes/admin.py" = ["E722"]
+"backend/main.py" = ["E402"]
+
 [tool.ruff.format]
 quote-style = "double"
 

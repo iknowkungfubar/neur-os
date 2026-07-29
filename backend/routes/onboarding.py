@@ -1,4 +1,5 @@
 """Onboarding routes."""
+
 from __future__ import annotations
 
 import json
@@ -12,6 +13,7 @@ from backend.store import DataStore
 
 router = APIRouter()
 
+
 @router.post("/api/onboarding/chat")
 async def onboarding_chat(data: OnboardingChat, store: DataStore = Depends(get_store)):
     questions = [
@@ -22,9 +24,20 @@ async def onboarding_chat(data: OnboardingChat, store: DataStore = Depends(get_s
     ]
     result = "done" if data.turn >= len(questions) else questions[data.turn]
     existing = store.get_onboarding()
-    profile = json.loads(existing["extracted_profile"]) if existing and existing.get("extracted_profile") else {}
+    profile = (
+        json.loads(existing["extracted_profile"])
+        if existing and existing.get("extracted_profile")
+        else {}
+    )
     if data.history:
-        profile[f"turn_{data.turn}"] = data.history[-1]["content"] if data.history else ""
+        profile[f"turn_{data.turn}"] = (
+            data.history[-1]["content"] if data.history else ""
+        )
     store.save_onboarding(min(data.turn + 1, 5), data.turn + 1, profile)
-    return ok({"response": result, "turn": data.turn + 1, "done": data.turn >= len(questions) - 1})
-
+    return ok(
+        {
+            "response": result,
+            "turn": data.turn + 1,
+            "done": data.turn >= len(questions) - 1,
+        }
+    )

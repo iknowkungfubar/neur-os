@@ -1,4 +1,5 @@
 """Tests for NeurOS v0.4.1 endpoints: passive log, crisis check, onboarding chat."""
+
 from __future__ import annotations
 
 import os
@@ -30,12 +31,13 @@ class TestPassiveLog:
     @classmethod
     def setup_class(cls):
         """Reset the global store before running this class's tests.
-        
+
         Each test file's module-level code sets the same global _store during
         import, so the LAST file imported wins. This reset at class setup time
         ensures we start with a clean store regardless of import order.
         """
         from backend.store import InMemoryStore
+
         deps._store = InMemoryStore()
 
     def test_check_no_logs_today(self):
@@ -45,19 +47,25 @@ class TestPassiveLog:
         assert data["should_prompt"] is True
 
     def test_submit_log(self):
-        resp = client.post("/api/passive-log/submit", json={
-            "response": "cleaning the kitchen",
-            "spoons_at_time": 5.0,
-        })
+        resp = client.post(
+            "/api/passive-log/submit",
+            json={
+                "response": "cleaning the kitchen",
+                "spoons_at_time": 5.0,
+            },
+        )
         assert resp.status_code == 200
         data = unwrap(resp)
         assert data["saved"] is True
 
     def test_check_after_submit(self):
-        client.post("/api/passive-log/submit", json={
-            "response": "taking a break",
-            "spoons_at_time": 3.0,
-        })
+        client.post(
+            "/api/passive-log/submit",
+            json={
+                "response": "taking a break",
+                "spoons_at_time": 3.0,
+            },
+        )
         resp = client.get("/api/passive-log/check")
         assert resp.status_code == 200
         data = unwrap(resp)
@@ -70,12 +78,15 @@ class TestPassiveLog:
         assert len(data["entries"]) >= 2
 
     def test_submit_all_fields(self):
-        resp = client.post("/api/passive-log/submit", json={
-            "response": "writing tests",
-            "spoons_at_time": 8.0,
-            "current_task_id": "test-abc-123",
-            "source": "manual",
-        })
+        resp = client.post(
+            "/api/passive-log/submit",
+            json={
+                "response": "writing tests",
+                "spoons_at_time": 8.0,
+                "current_task_id": "test-abc-123",
+                "source": "manual",
+            },
+        )
         assert resp.status_code == 200
         data = unwrap(resp)
         assert data["saved"] is True
@@ -88,41 +99,64 @@ class TestPassiveLog:
 
 class TestCrisisCheck:
     def test_below_threshold(self):
-        resp = client.post("/api/crisis/check", json={
-            "cognitive_load": 0.2, "frustration_markers": 0.1, "error_rate": 0.0,
-        })
+        resp = client.post(
+            "/api/crisis/check",
+            json={
+                "cognitive_load": 0.2,
+                "frustration_markers": 0.1,
+                "error_rate": 0.0,
+            },
+        )
         assert resp.status_code == 200
         data = unwrap(resp)
         assert data["trigger"] is False
 
     def test_above_threshold(self):
-        resp = client.post("/api/crisis/check", json={
-            "cognitive_load": 0.9, "frustration_markers": 0.9, "error_rate": 0.5,
-        })
+        resp = client.post(
+            "/api/crisis/check",
+            json={
+                "cognitive_load": 0.9,
+                "frustration_markers": 0.9,
+                "error_rate": 0.5,
+            },
+        )
         assert resp.status_code == 200
         data = unwrap(resp)
         assert data["trigger"] is True
 
     def test_boundary_threshold(self):
-        resp = client.post("/api/crisis/check", json={
-            "cognitive_load": 0.7, "frustration_markers": 0.7, "error_rate": 0.7,
-        })
+        resp = client.post(
+            "/api/crisis/check",
+            json={
+                "cognitive_load": 0.7,
+                "frustration_markers": 0.7,
+                "error_rate": 0.7,
+            },
+        )
         assert resp.status_code == 200
         data = unwrap(resp)
         assert data["confidence"] == 0.7
 
     def test_minimal_scores(self):
-        resp = client.post("/api/crisis/check", json={
-            "cognitive_load": 0.0, "frustration_markers": 0.0, "error_rate": 0.0,
-        })
+        resp = client.post(
+            "/api/crisis/check",
+            json={
+                "cognitive_load": 0.0,
+                "frustration_markers": 0.0,
+                "error_rate": 0.0,
+            },
+        )
         assert resp.status_code == 200
         data = unwrap(resp)
         assert data["trigger"] is False
 
     def test_missing_fields_default_to_zero(self):
-        resp = client.post("/api/crisis/check", json={
-            "cognitive_load": 0.9,
-        })
+        resp = client.post(
+            "/api/crisis/check",
+            json={
+                "cognitive_load": 0.9,
+            },
+        )
         assert resp.status_code == 200
         data = unwrap(resp)
         assert data["confidence"] == 0.45
@@ -130,41 +164,61 @@ class TestCrisisCheck:
 
 class TestOnboardingChat:
     def test_first_turn(self):
-        resp = client.post("/api/onboarding/chat", json={
-            "history": [], "turn": 0,
-        })
+        resp = client.post(
+            "/api/onboarding/chat",
+            json={
+                "history": [],
+                "turn": 0,
+            },
+        )
         assert resp.status_code == 200
         data = unwrap(resp)
-        assert data["response"] == "What kind of tasks do you need the most help keeping track of?"
+        assert (
+            data["response"]
+            == "What kind of tasks do you need the most help keeping track of?"
+        )
 
     def test_mid_conversation(self):
-        resp = client.post("/api/onboarding/chat", json={
-            "history": [{"role": "user", "content": "I struggle with morning tasks"},
-                        {"role": "assistant", "content": "When do you have energy?"},
-                        {"role": "user", "content": "Evenings are better"}],
-            "turn": 2,
-        })
+        resp = client.post(
+            "/api/onboarding/chat",
+            json={
+                "history": [
+                    {"role": "user", "content": "I struggle with morning tasks"},
+                    {"role": "assistant", "content": "When do you have energy?"},
+                    {"role": "user", "content": "Evenings are better"},
+                ],
+                "turn": 2,
+            },
+        )
         assert resp.status_code == 200
         data = unwrap(resp)
         assert data["response"] == "When you're overwhelmed, what helps you recharge?"
 
     def test_conversation_completes(self):
-        resp = client.post("/api/onboarding/chat", json={
-            "history": [{"role": "user", "content": "Response"} for _ in range(4)],
-            "turn": 4,
-        })
+        resp = client.post(
+            "/api/onboarding/chat",
+            json={
+                "history": [{"role": "user", "content": "Response"} for _ in range(4)],
+                "turn": 4,
+            },
+        )
         assert resp.status_code == 200
         data = unwrap(resp)
         assert data["done"] is True
 
     def test_llm_offline_fallback(self):
-        resp = client.post("/api/onboarding/chat", json={
-            "history": [{"role": "user", "content": "test"}],
-            "turn": 1,
-        })
+        resp = client.post(
+            "/api/onboarding/chat",
+            json={
+                "history": [{"role": "user", "content": "test"}],
+                "turn": 1,
+            },
+        )
         assert resp.status_code == 200
         data = unwrap(resp)
-        assert data["response"] == "What time of day do you usually have the most energy?"
+        assert (
+            data["response"] == "What time of day do you usually have the most energy?"
+        )
 
 
 class TestHealth:

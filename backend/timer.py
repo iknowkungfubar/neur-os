@@ -4,6 +4,7 @@ States: IDLE -> RUNNING -> PAUSED -> RUNNING -> COMPLETED
          RUNNING -> COMPLETED (on expiry)
          Any -> CANCELLED
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -55,7 +56,8 @@ class TimerSession:
             raise ValueError(f"Cannot start timer in state {self.state}")
         now = datetime.now(timezone.utc).isoformat()
         return {
-            "action": "start", "state": "RUNNING",
+            "action": "start",
+            "state": "RUNNING",
             "task_id": data.get("task_id"),
             "duration_minutes": data.get("duration_minutes", 25),
             "soundscape": data.get("soundscape", ""),
@@ -68,7 +70,11 @@ class TimerSession:
     def pause(self) -> dict[str, Any]:
         if not self.can_transition_to("pause"):
             raise ValueError(f"Cannot pause timer in state {self.state}")
-        return {"action": "pause", "state": "PAUSED", "paused_at": datetime.now(timezone.utc).isoformat()}
+        return {
+            "action": "pause",
+            "state": "PAUSED",
+            "paused_at": datetime.now(timezone.utc).isoformat(),
+        }
 
     def resume(self) -> dict[str, Any]:
         if not self.can_transition_to("resume"):
@@ -79,9 +85,17 @@ class TimerSession:
     def complete(self) -> dict[str, Any]:
         if not self.can_transition_to("complete"):
             raise ValueError(f"Cannot complete timer in state {self.state}")
-        return {"action": "complete", "state": "COMPLETED", "completed_at": datetime.now(timezone.utc).isoformat()}
+        return {
+            "action": "complete",
+            "state": "COMPLETED",
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }
 
     def cancel(self) -> dict[str, Any]:
         if not self.can_transition_to("cancel"):
             raise ValueError(f"Cannot cancel timer in state {self.state}")
-        return {"action": "cancel", "state": "CANCELLED", "cancelled_at": datetime.now(timezone.utc).isoformat()}
+        return {
+            "action": "cancel",
+            "state": "CANCELLED",
+            "cancelled_at": datetime.now(timezone.utc).isoformat(),
+        }
