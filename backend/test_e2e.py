@@ -8,12 +8,17 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from conftest import unwrap
 from fastapi.testclient import TestClient
 
+from backend.config import DB_PATH
 import backend.main as app_module
 from backend.store import InMemoryStore
 
 # Use InMemoryStore — no file I/O, isolated per test file
 store = InMemoryStore()
 app_module.set_store(store)
+
+# Ensure db placeholder exists so backup endpoint works (InMemoryStore doesn't create the file)
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+DB_PATH.touch()
 
 # Seed dopamine menu so soundscape test works
 for name, cat, energy, sort in [
