@@ -16,13 +16,16 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.config import DATA_DIR
 
-DATA_DIR = Path(__file__).parent / "data"
+DATA_DIR = Path(__file__).parent / "data"  # noqa: F811
 DATA_DIR.mkdir(exist_ok=True)
 DB_PATH = DATA_DIR / "neur-os.db"
 
 # ── Store — FastAPI-managed singleton via backend/deps.py ──
-from backend.deps import reset_store, set_store  # noqa: F401 — re-exported for tests
-from backend.routes import (
+from backend.deps import (  # noqa: F401, E402 — re-exported for tests
+    reset_store,
+    set_store,
+)
+from backend.routes import (  # noqa: E402
     admin,
     brain,
     checkin,

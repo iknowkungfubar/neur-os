@@ -399,7 +399,9 @@ class InMemoryStore(DataStore):
 
     def get_interoception(self, limit: int = 20) -> list[dict]:
         return sorted(
-            self.interoception_logs, key=lambda l: l.get("created_at", ""), reverse=True
+            self.interoception_logs,
+            key=lambda log_item: log_item.get("created_at", ""),
+            reverse=True,
         )[:limit]
 
     # ── Passive Log ──

@@ -60,11 +60,7 @@ async def admin_night_ws(websocket: WebSocket, room_id: str):
         presence = {
             "type": "presence",
             "count": len(
-                [
-                    c
-                    for c in room["connections"]
-                    if c.client_state.name == "CONNECTED"
-                ]
+                [c for c in room["connections"] if c.client_state.name == "CONNECTED"]
             ),
         }
         for c in room["connections"]:

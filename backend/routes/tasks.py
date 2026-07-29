@@ -97,15 +97,6 @@ async def update_task(
     return ok({"status": "updated"})
 
 
-@router.patch("/api/tasks/{task_id}")
-async def update_task(
-    task_id: str, update: TaskUpdate, store: DataStore = Depends(get_store)
-):
-    if not store.update_task(task_id, update.dict(exclude_unset=True)):
-        raise HTTPException(404, "Task not found")
-    return ok({"status": "updated"})
-
-
 @router.post("/api/tasks/{task_id}/expend")
 async def expend_spoons(task_id: str, store: DataStore = Depends(get_store)):
     result = store.complete_task(task_id)
