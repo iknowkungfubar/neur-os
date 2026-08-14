@@ -99,7 +99,8 @@ DOPAMINE_MENU = {
 ## Testing
 
 ```bash
-cd backend && python3 -m pytest -q
+uv sync --extra dev
+uv run pytest backend/ -q
 # → 56 passed
 ```
 
