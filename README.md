@@ -49,9 +49,11 @@ All 4 clients hit the same REST API. Nothing requires cloud infrastructure.
 ## Quick Start
 
 ```bash
-# Start the server (requires Python 3.11+)
+# Install dependencies (Python 3.11+, from repo root)
+uv sync
+
+# Start the server
 cd backend
-pip install -r requirements.txt
 python main.py
 # → http://localhost:7447
 
