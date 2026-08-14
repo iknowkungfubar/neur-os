@@ -49,10 +49,11 @@ All 4 clients hit the same REST API. Nothing requires cloud infrastructure.
 ## Quick Start
 
 ```bash
-# Start the server (requires Python 3.11+)
-cd backend
-pip install -r requirements.txt
-python main.py
+# Install dependencies (Python 3.11+, from repo root)
+uv sync
+
+# Start the server (from repo root)
+uv run uvicorn backend.main:app --port 7447
 # → http://localhost:7447
 
 # Mobile (requires Expo CLI)
@@ -98,7 +99,8 @@ DOPAMINE_MENU = {
 ## Testing
 
 ```bash
-cd backend && python3 -m pytest -q
+uv sync --extra dev
+uv run pytest backend/ -q
 # → 56 passed
 ```
 
