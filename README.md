@@ -52,9 +52,8 @@ All 4 clients hit the same REST API. Nothing requires cloud infrastructure.
 # Install dependencies (Python 3.11+, from repo root)
 uv sync
 
-# Start the server
-cd backend
-python main.py
+# Start the server (from repo root)
+uv run uvicorn backend.main:app --port 7447
 # → http://localhost:7447
 
 # Mobile (requires Expo CLI)
