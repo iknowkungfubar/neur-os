@@ -27,3 +27,4 @@ research/
 neur-os-mobile/node_modules/
 neur-os-mobile/dist/
 .coverage
+.token-policy/
